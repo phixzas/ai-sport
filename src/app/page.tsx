@@ -1,0 +1,461 @@
+"use client";
+
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+
+type Subscription = { sport: string; expires_at: string };
+type AuthResponse = { token?: string; email?: string; error?: string };
+type FootballPrediction = {
+  home_team: string;
+  away_team: string;
+  expected_home_goals: number;
+  expected_away_goals: number;
+  home_win_probability_pct: number;
+  draw_probability_pct: number;
+  away_win_probability_pct: number;
+  over_2_5_probability_pct: number;
+  under_2_5_probability_pct: number;
+  most_likely_score: string;
+  most_likely_score_probability_pct: number;
+};
+type NbaPrediction = {
+  home_team: string;
+  away_team: string;
+  line: number;
+  predicted_home: number;
+  predicted_away: number;
+  predicted_total: number;
+  edge: number;
+  pick: string;
+  winner: string | null;
+  winner_probability: number | null;
+  injuries: {
+    home: { report: string; out_count: number };
+    away: { report: string; out_count: number };
+  };
+};
+type Prediction = { sport: "Football"; result: FootballPrediction } | { sport: "NBA"; result: NbaPrediction };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function getApiError(value: unknown) {
+  if (!isRecord(value)) return undefined;
+  if (typeof value.error === "string") return value.error;
+  if (typeof value.detail === "string") return value.detail;
+  return undefined;
+}
+
+function isFootballPrediction(value: unknown): value is FootballPrediction {
+  return isRecord(value) &&
+    typeof value.home_team === "string" &&
+    typeof value.away_team === "string" &&
+    typeof value.expected_home_goals === "number" &&
+    typeof value.expected_away_goals === "number" &&
+    typeof value.home_win_probability_pct === "number" &&
+    typeof value.draw_probability_pct === "number" &&
+    typeof value.away_win_probability_pct === "number" &&
+    typeof value.over_2_5_probability_pct === "number" &&
+    typeof value.under_2_5_probability_pct === "number" &&
+    typeof value.most_likely_score === "string" &&
+    typeof value.most_likely_score_probability_pct === "number";
+}
+
+function isNbaPrediction(value: unknown): value is NbaPrediction {
+  if (!isRecord(value) || !isRecord(value.injuries) ||
+      !isRecord(value.injuries.home) || !isRecord(value.injuries.away)) return false;
+  return typeof value.home_team === "string" &&
+    typeof value.away_team === "string" &&
+    typeof value.line === "number" &&
+    typeof value.predicted_home === "number" &&
+    typeof value.predicted_away === "number" &&
+    typeof value.predicted_total === "number" &&
+    typeof value.edge === "number" &&
+    typeof value.pick === "string" &&
+    (typeof value.winner === "string" || value.winner === null) &&
+    (typeof value.winner_probability === "number" || value.winner_probability === null) &&
+    typeof value.injuries.home.report === "string" &&
+    typeof value.injuries.home.out_count === "number" &&
+    typeof value.injuries.away.report === "string" &&
+    typeof value.injuries.away.out_count === "number";
+}
+
+async function readAuthResponse(response: Response): Promise<AuthResponse | null> {
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!contentType.includes("application/json")) return null;
+  try {
+    return await response.json() as AuthResponse;
+  } catch {
+    return null;
+  }
+}
+
+function Icon({ name, size = 20 }: { name:string; size?:number }) {
+  const paths: Record<string, ReactNode> = {
+    grid:<><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></>,
+    trophy:<><path d="M8 21h8M12 17v4M7 4h10v4a5 5 0 0 1-10 0V4Z"/><path d="M7 6H4v1a4 4 0 0 0 4 4M17 6h3v1a4 4 0 0 1-4 4"/></>,
+    chart:<><path d="M3 3v18h18"/><path d="m7 16 4-5 3 3 6-8"/></>,
+    wallet:<><path d="M4 6h16v14H4z"/><path d="M4 6V4h13v2M15 11h5v5h-5a2.5 2.5 0 0 1 0-5Z"/></>,
+    user:<><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></>,
+    bell:<><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></>,
+    search:<><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></>,
+    chevron:<path d="m9 18 6-6-6-6"/>,
+  };
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
+}
+
+export default function Home() {
+  const [sport,setSport] = useState("Football");
+  const [period,setPeriod] = useState("30 days");
+  const [email,setEmail] = useState("");
+  const [password,setPassword] = useState("");
+  const [userEmail,setUserEmail] = useState<string|null>(null);
+  const [accessToken,setAccessToken] = useState<string|null>(null);
+  const [subscriptions,setSubscriptions] = useState<Subscription[]>([]);
+  const [authLoading,setAuthLoading] = useState(true);
+  const [authMode,setAuthMode] = useState<"signIn"|"signUp">("signIn");
+  const [message,setMessage] = useState("");
+  const [error,setError] = useState("");
+  const [refreshKey,setRefreshKey] = useState(0);
+  const [teams,setTeams] = useState<string[]>([]);
+  const [teamsLoading,setTeamsLoading] = useState(false);
+  const [homeTeam,setHomeTeam] = useState("");
+  const [awayTeam,setAwayTeam] = useState("");
+  const [line,setLine] = useState("226.5");
+  const [prediction,setPrediction] = useState<Prediction|null>(null);
+  const [predictionLoading,setPredictionLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.resolve().then(() => {
+      if (cancelled) return;
+      const savedToken = window.localStorage.getItem("formly_token");
+      if (savedToken) setAccessToken(savedToken);
+      else setAuthLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!accessToken) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await fetch("/api/subscriptions", {
+          headers: { Authorization: `Bearer ${accessToken}` },
+          cache: "no-store",
+        });
+        const data = await response.json() as { email?: string; subscriptions?: Subscription[]; error?: string };
+        if (cancelled) return;
+        if (response.status === 401) {
+          window.localStorage.removeItem("formly_token");
+          setAccessToken(null);
+          setUserEmail(null);
+          setSubscriptions([]);
+          setError("Your sign-in expired. Please sign in again.");
+        } else if (!response.ok || !data.email || !data.subscriptions) {
+          setError(data.error ?? "Could not load subscription status. Please refresh.");
+        } else {
+          setUserEmail(data.email);
+          setSubscriptions(data.subscriptions);
+          setError("");
+        }
+      } catch {
+        if (!cancelled) setError("Could not load subscription status. Please refresh.");
+      } finally {
+        if (!cancelled) setAuthLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [accessToken,refreshKey]);
+
+  useEffect(() => {
+    if (!accessToken || !subscriptions.some(item =>
+      item.sport === sport && new Date(item.expires_at).getTime() > Date.now())) {
+      return;
+    }
+
+    let cancelled = false;
+    void Promise.resolve().then(async () => {
+      if (cancelled) return;
+      setTeamsLoading(true);
+      try {
+        const modelName = sport === "NBA" ? "nba" : "football";
+        const response = await fetch(`/api/models/${modelName}/teams`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+          cache: "no-store",
+        });
+        const result: unknown = await response.json();
+        if (cancelled) return;
+        if (!response.ok || !Array.isArray(result) || !result.every(team => typeof team === "string")) {
+          setError(getApiError(result) ?? `Could not load ${sport} teams.`);
+          setTeams([]);
+          return;
+        }
+        setTeams(result);
+        setError("");
+        setHomeTeam(current => result.includes(current) ? current : result[0] ?? "");
+        setAwayTeam(current => result.includes(current) ? current : result[1] ?? "");
+      } catch {
+        if (!cancelled) setError(`Could not connect to the ${sport} model API.`);
+      } finally {
+        if (!cancelled) setTeamsLoading(false);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [accessToken,sport,subscriptions]);
+
+  async function submitAuth(event:FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setMessage("");
+    try {
+      const response = await fetch(authMode === "signUp" ? "/api/auth/register" : "/api/auth/login", {
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({email,password}),
+      });
+      const result = await readAuthResponse(response);
+      if (!result) {
+        setError(`The account API is missing from this deployment (HTTP ${response.status}). Deploy the current project to Render as a Web Service, not a Static Site.`);
+        return;
+      }
+      if (!response.ok) {
+        setError(result.error ?? `Account request failed (HTTP ${response.status}).`);
+        return;
+      }
+      if (!result.token || !result.email) {
+        setError("The account service returned an incomplete response. Check the Render service logs.");
+        return;
+      }
+      window.localStorage.setItem("formly_token",result.token);
+      setAccessToken(result.token);
+      setPassword("");
+    } catch {
+      setError("Could not connect to the account service. Please try again.");
+    }
+  }
+
+  async function startPayment() {
+    setError("");
+    if (!accessToken) {
+      setError("Sign in before purchasing a subscription.");
+      return;
+    }
+    try {
+      const response = await fetch("/api/payments/initialize", {
+        method:"POST",
+        headers:{"Content-Type":"application/json",Authorization:`Bearer ${accessToken}`},
+        body:JSON.stringify({sport}),
+      });
+      const result = await response.json() as {authorizationUrl?:string;error?:string};
+      if (!response.ok || !result.authorizationUrl) {
+        setError(result.error ?? "Could not start payment. Please try again.");
+        return;
+      }
+      window.location.assign(result.authorizationUrl);
+    } catch {
+      setError("Could not connect to the payment service. Please try again.");
+    }
+  }
+
+  async function openModel() {
+    const active = subscriptions.some(item => item.sport === sport && new Date(item.expires_at).getTime() > Date.now());
+    if (!active) {
+      await startPayment();
+      return;
+    }
+    document.getElementById("model-predictions")?.scrollIntoView({ behavior: "smooth" });
+  }
+
+  async function runPrediction(event:FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!accessToken) {
+      setError("Sign in again before requesting a prediction.");
+      return;
+    }
+    setError("");
+    setPrediction(null);
+    setPredictionLoading(true);
+    try {
+      const modelName = sport === "NBA" ? "nba" : "football";
+      const body = sport === "NBA"
+        ? { home_team: homeTeam, away_team: awayTeam, line: Number(line) }
+        : { home_team: homeTeam, away_team: awayTeam };
+      const response = await fetch(`/api/models/${modelName}/predict`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify(body),
+      });
+      const result: unknown = await response.json();
+      if (!response.ok) {
+        setError(getApiError(result) ?? `The ${sport} prediction could not be generated.`);
+        return;
+      }
+      if (sport === "NBA") {
+        if (!isNbaPrediction(result)) {
+          setError("The NBA model returned an incomplete prediction.");
+          return;
+        }
+        setPrediction({ sport: "NBA", result });
+      } else {
+        if (!isFootballPrediction(result)) {
+          setError("The Football model returned an incomplete prediction.");
+          return;
+        }
+        setPrediction({ sport: "Football", result });
+      }
+    } catch {
+      setError(`Could not connect to the ${sport} model API.`);
+    } finally {
+      setPredictionLoading(false);
+    }
+  }
+
+  async function signOut() {
+    window.localStorage.removeItem("formly_token");
+    setAccessToken(null);
+    setUserEmail(null);
+    setSubscriptions([]);
+    setAuthLoading(false);
+  }
+
+  if (authLoading) return <div className="auth-page"><div className="auth-card">Loading your account…</div></div>;
+  if (!userEmail) return (
+    <div className="auth-page">
+      <form className="auth-card" onSubmit={submitAuth}>
+        <div className="brand auth-brand"><div className="brand-mark"><span>F</span></div><span>FORMLY</span></div>
+        <p className="eyebrow">MEMBER ACCESS</p>
+        <h1>{authMode === "signIn" ? "Welcome back" : "Create your account"}</h1>
+        <p className="auth-copy">Sign in to manage subscriptions and access your sports models.</p>
+        <label>Email<input type="email" autoComplete="email" required value={email} onChange={event=>setEmail(event.target.value)}/></label>
+        <label>Password<input type="password" autoComplete={authMode === "signIn" ? "current-password" : "new-password"} minLength={8} required value={password} onChange={event=>setPassword(event.target.value)}/></label>
+        {error && <p className="form-error" role="alert">{error}</p>}
+        {message && <p className="form-message" role="status">{message}</p>}
+        <button className="primary-button auth-submit" type="submit">{authMode === "signIn" ? "Sign in" : "Create account"}</button>
+        <button className="auth-switch" type="button" onClick={()=>{setAuthMode(authMode==="signIn"?"signUp":"signIn");setError("");setMessage("");}}>
+          {authMode === "signIn" ? "New here? Create an account" : "Already have an account? Sign in"}
+        </button>
+      </form>
+    </div>
+  );
+
+  const activeSubscription = subscriptions.find(item=>item.sport===sport);
+
+  return (
+    <div className="app-shell">
+      <aside className="sidebar">
+        <div className="brand"><div className="brand-mark"><svg viewBox="0 0 32 32"><path d="M16 3v26M3 16h26M7 7l18 18M25 7 7 25"/><circle cx="16" cy="16" r="7"/></svg></div><span>FORMLY</span></div>
+        <nav className="main-nav" aria-label="Main navigation">
+          <button className="nav-item active"><Icon name="grid"/><span>Overview</span></button>
+          <button className="nav-item"><Icon name="trophy"/><span>Predictions</span></button>
+          <button className="nav-item"><Icon name="chart"/><span>Performance</span></button>
+          <button className="nav-item"><Icon name="wallet"/><span>Subscription</span></button>
+        </nav>
+        <div className="sidebar-bottom">
+          <button className="nav-item"><Icon name="user"/><span>Account</span></button>
+          <div className="profile"><div className="avatar">AK</div><div><strong>Ade Kunle</strong><span>Premium member</span></div></div>
+        </div>
+      </aside>
+
+      <main className="main">
+        <header className="topbar">
+          <div className="search"><Icon name="search" size={18}/><input aria-label="Search predictions" placeholder="Search predictions..."/><kbd>⌘ K</kbd></div>
+          <div className="top-actions">
+            <button className="icon-button" aria-label="Notifications"><Icon name="bell"/><span className="notification-dot"/></button>
+            <button className="profile-button" onClick={()=>void signOut()} aria-label={`Sign out ${userEmail}`}><span>{userEmail.slice(0,2).toUpperCase()}</span><Icon name="chevron" size={16}/></button>
+          </div>
+        </header>
+
+        <div className="content">
+          <section className="welcome"><div><p className="eyebrow">MEMBER DASHBOARD</p><h1>Welcome back</h1></div><button className="primary-button" onClick={()=>void openModel()}>{activeSubscription?`Get ${sport} predictions`:`Subscribe to ${sport}`}</button></section>
+
+          <section className="sport-tabs" aria-label="Choose sport">
+            {["Football","NBA"].map(item => <button key={item} className={sport===item?"selected":""} onClick={()=>{setSport(item);setPrediction(null);setTeams([]);setError("");}}>{item}{item==="NBA"?<span className="tab-price">₦10,000</span>:<span className="tab-price">₦50,000</span>}</button>)}
+          </section>
+
+          <section className="stats-grid">
+            <article className="stat-card"><div className="stat-heading"><span>Winning rate</span><div className="trend">+4.8%</div></div><strong>86.5%</strong><div className="progress"><span style={{width:"86.5%"}}/></div><p>Last 30 predictions</p></article>
+            <article className="stat-card"><div className="stat-heading"><span>Profit this month</span><div className="trend">+12.2%</div></div><strong>+₦80,000,000</strong><p>Across all markets</p></article>
+            <article className="stat-card access-card"><div className="stat-heading"><span>{sport} access</span><span className={activeSubscription?"active-status":"locked-status"}>{activeSubscription?"Active":"Locked"}</span></div><strong>{activeSubscription?new Date(activeSubscription.expires_at).toLocaleDateString():"No active plan"}</strong><p>{activeSubscription?`Expires after your 30-day access period`:`${sport==="NBA"?"₦10,000":"₦50,000"} for 30 days`}</p></article>
+          </section>
+          {error && <p className="form-error dashboard-error" role="alert">{error}</p>}
+          <div className="access-refresh"><span>Model access is available only while your selected subscription is active.</span><button className="text-button" onClick={()=>setRefreshKey(value=>value+1)}>Refresh access</button></div>
+
+          <section className="dashboard-grid">
+            <article className="panel predictions-panel" id="model-predictions">
+              <div className="panel-heading"><div><p className="eyebrow">MODEL ACCESS</p><h2>{sport} predictions</h2></div></div>
+              {activeSubscription ? (
+                <>
+                  <form className="model-form" onSubmit={runPrediction}>
+                    <label>Home team
+                      <select required value={homeTeam} disabled={teamsLoading || teams.length === 0} onChange={event=>setHomeTeam(event.target.value)}>
+                        {teams.map(team=><option key={team} value={team}>{team}</option>)}
+                      </select>
+                    </label>
+                    <label>Away team
+                      <select required value={awayTeam} disabled={teamsLoading || teams.length === 0} onChange={event=>setAwayTeam(event.target.value)}>
+                        {teams.map(team=><option key={team} value={team}>{team}</option>)}
+                      </select>
+                    </label>
+                    {sport === "NBA" && <label>Bookmaker total line
+                      <input type="number" min="180" max="260" step="0.5" required value={line} onChange={event=>setLine(event.target.value)}/>
+                    </label>}
+                    <button className="primary-button" type="submit" disabled={teamsLoading || predictionLoading || teams.length < 2}>
+                      {teamsLoading ? "Loading teams…" : predictionLoading ? "Generating prediction…" : "Predict match"}
+                    </button>
+                  </form>
+                  {prediction?.sport === "Football" && (
+                    <div className="prediction-result" aria-live="polite">
+                      <h3>{prediction.result.home_team} vs {prediction.result.away_team}</h3>
+                      <p>Expected goals <strong>{prediction.result.expected_home_goals.toFixed(2)} – {prediction.result.expected_away_goals.toFixed(2)}</strong></p>
+                      <p>1X2 <strong>{prediction.result.home_win_probability_pct.toFixed(1)}% / {prediction.result.draw_probability_pct.toFixed(1)}% / {prediction.result.away_win_probability_pct.toFixed(1)}%</strong></p>
+                      <p>Over 2.5 <strong>{prediction.result.over_2_5_probability_pct.toFixed(1)}%</strong> · Under 2.5 <strong>{prediction.result.under_2_5_probability_pct.toFixed(1)}%</strong></p>
+                      <p>Most likely score <strong>{prediction.result.most_likely_score}</strong> ({prediction.result.most_likely_score_probability_pct.toFixed(1)}%)</p>
+                    </div>
+                  )}
+                  {prediction?.sport === "NBA" && (
+                    <div className="prediction-result" aria-live="polite">
+                      <h3>{prediction.result.home_team} vs {prediction.result.away_team}</h3>
+                      <p>Predicted total <strong>{prediction.result.predicted_total.toFixed(1)}</strong> · Line <strong>{prediction.result.line}</strong></p>
+                      <p>Pick <strong>{prediction.result.pick}</strong> · Edge <strong>{prediction.result.edge > 0 ? "+" : ""}{prediction.result.edge.toFixed(1)}</strong></p>
+                      {prediction.result.winner && <p>Likely winner <strong>{prediction.result.winner}</strong>{prediction.result.winner_probability !== null ? ` (${(prediction.result.winner_probability * 100).toFixed(1)}%)` : ""}</p>}
+                      <p>Injuries: {prediction.result.home_team} — {prediction.result.injuries.home.report || "None reported"}; {prediction.result.away_team} — {prediction.result.injuries.away.report || "None reported"}</p>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="locked-preview">
+                  <strong>Predictions are for subscribers</strong>
+                  <span>Subscribe to {sport} to request predictions from the model API.</span>
+                  <button className="text-button" onClick={()=>void startPayment()}>Subscribe for {sport==="NBA"?"₦10,000":"₦50,000"} <Icon name="chevron" size={16}/></button>
+                </div>
+              )}
+            </article>
+
+            <aside className="right-column">
+              <article className="panel performance-panel">
+                <div className="panel-heading"><h2>Performance</h2><select aria-label="Performance period" value={period} onChange={e=>setPeriod(e.target.value)}><option>30 days</option><option>7 days</option><option>90 days</option></select></div>
+                <div className="chart">
+                  <div className="chart-labels"><span>100%</span><span>75%</span><span>50%</span><span>25%</span></div>
+                  <svg viewBox="0 0 360 170" preserveAspectRatio="none">
+                    <defs><linearGradient id="area" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#6c5ce7" stopOpacity=".28"/><stop offset="100%" stopColor="#6c5ce7" stopOpacity="0"/></linearGradient></defs>
+                    <path className="grid-line" d="M0 28H360M0 70H360M0 112H360M0 154H360"/>
+                    <path className="area" d="M0 132 C30 118 48 126 72 108 S115 94 135 102 S175 88 198 94 S238 68 260 78 S300 48 360 38 L360 170 L0 170Z"/>
+                    <path className="chart-line" d="M0 132 C30 118 48 126 72 108 S115 94 135 102 S175 88 198 94 S238 68 260 78 S300 48 360 38"/>
+                    <circle cx="360" cy="38" r="5"/>
+                  </svg>
+                  <div className="chart-dates"><span>Oct 22</span><span>Oct 29</span><span>Nov 5</span><span>Nov 12</span><span>Nov 21</span></div>
+                </div>
+              </article>
+              <article className="panel plan-panel"><div><p className="eyebrow">CURRENT PLAN</p><h2>{sport} Premium</h2></div><div className="plan-price">{sport==="NBA"?"₦10,000":"₦50,000"}<span>/30 days</span></div><button className="secondary-button">Manage subscription</button></article>
+            </aside>
+          </section>
+        </div>
+      </main>
+    </div>
+  );
+}

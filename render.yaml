@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: formly-sports
+    runtime: node
+    plan: starter
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
