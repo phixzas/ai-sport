@@ -37,7 +37,14 @@ export async function POST(request: Request) {
   }
 
   const reference = `formly_${randomUUID()}`;
-  const callbackUrl = new URL("/", request.url);
+  const forwardedHost = request.headers.get("x-forwarded-host")?.split(",")[0].trim();
+  const forwardedProtocol = request.headers.get("x-forwarded-proto")?.split(",")[0].trim();
+  const configuredOrigin = process.env.RENDER_EXTERNAL_URL ?? process.env.NEXT_PUBLIC_SITE_URL;
+  const origin = forwardedHost &&
+    (forwardedProtocol === "http" || forwardedProtocol === "https")
+    ? new URL(`${forwardedProtocol}://${forwardedHost}`)
+    : new URL(configuredOrigin ?? request.url);
+  const callbackUrl = new URL("/", origin);
   callbackUrl.searchParams.set("payment", "complete");
   const paymentResponse = await fetch("https://api.paystack.co/transaction/initialize", {
     method: "POST",
