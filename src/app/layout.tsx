@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Formly | Sports Predictions",
+  title: "SportSense AI | Sports Predictions",
   description: "Premium NBA and football match predictions.",
 };
 

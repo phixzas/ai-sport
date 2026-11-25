@@ -327,7 +327,7 @@ export default function Home() {
   if (!userEmail) return (
     <div className="auth-page">
       <form className="auth-card" onSubmit={submitAuth}>
-        <div className="brand auth-brand"><div className="brand-mark"><span>F</span></div><span>FORMLY</span></div>
+        <div className="brand auth-brand"><div className="brand-mark"><span>S</span></div><span>SportSense AI</span></div>
         <p className="eyebrow">MEMBER ACCESS</p>
         <h1>{authMode === "signIn" ? "Welcome back" : "Create your account"}</h1>
         <p className="auth-copy">Sign in to manage subscriptions and access your sports models.</p>
@@ -348,7 +348,7 @@ export default function Home() {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div className="brand"><div className="brand-mark"><svg viewBox="0 0 32 32"><path d="M16 3v26M3 16h26M7 7l18 18M25 7 7 25"/><circle cx="16" cy="16" r="7"/></svg></div><span>FORMLY</span></div>
+        <div className="brand"><div className="brand-mark"><svg viewBox="0 0 32 32"><path d="M16 3v26M3 16h26M7 7l18 18M25 7 7 25"/><circle cx="16" cy="16" r="7"/></svg></div><span>SportSense AI</span></div>
         <nav className="main-nav" aria-label="Main navigation">
           <button className="nav-item active"><Icon name="grid"/><span>Overview</span></button>
           <button className="nav-item"><Icon name="trophy"/><span>Predictions</span></button>
