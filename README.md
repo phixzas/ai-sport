@@ -14,6 +14,8 @@ The site stores accounts, subscriptions, and generated prediction results in Mon
 
 NBA access is ₦10,000 for 30 days; Football access is ₦50,000 for 30 days. This implementation does not send account-confirmation emails.
 
+NBA subscribers see games in the model's next-24-hour schedule, enter a bookmaker total for each matchup, and can request predictions for all displayed games.
+
 ## Development
 
 ```bash
