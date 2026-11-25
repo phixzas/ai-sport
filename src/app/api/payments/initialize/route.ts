@@ -11,9 +11,8 @@ type Sport = keyof typeof pricesKobo;
 
 export async function POST(request: Request) {
   const paystackSecret = process.env.PAYSTACK_SECRET_KEY;
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL;
 
-  if (!paystackSecret || !siteUrl) {
+  if (!paystackSecret) {
     return NextResponse.json({ error: "Payment service is not configured." }, { status: 503 });
   }
 
@@ -38,6 +37,8 @@ export async function POST(request: Request) {
   }
 
   const reference = `formly_${randomUUID()}`;
+  const callbackUrl = new URL("/", request.url);
+  callbackUrl.searchParams.set("payment", "complete");
   const paymentResponse = await fetch("https://api.paystack.co/transaction/initialize", {
     method: "POST",
     headers: {
@@ -49,7 +50,7 @@ export async function POST(request: Request) {
       amount: pricesKobo[sport],
       currency: "NGN",
       reference,
-      callback_url: `${siteUrl}/?payment=complete`,
+      callback_url: callbackUrl.toString(),
       metadata: { user_id: user.id, sport },
     }),
     cache: "no-store",
