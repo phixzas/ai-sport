@@ -115,6 +115,7 @@ export default function Home() {
   const [authLoading,setAuthLoading] = useState(true);
   const [authMode,setAuthMode] = useState<"signIn"|"signUp">("signIn");
   const [message,setMessage] = useState("");
+  const [paymentMessage,setPaymentMessage] = useState("");
   const [error,setError] = useState("");
   const [refreshKey,setRefreshKey] = useState(0);
   const [teams,setTeams] = useState<string[]>([]);
@@ -168,6 +169,61 @@ export default function Home() {
     })();
     return () => { cancelled = true; };
   }, [accessToken,refreshKey]);
+
+  useEffect(() => {
+    if (!accessToken) return;
+    const searchParams = new URLSearchParams(window.location.search);
+    if (searchParams.get("payment") !== "complete") return;
+    const reference = searchParams.get("reference") ?? searchParams.get("trxref");
+
+    let cancelled = false;
+    void Promise.resolve().then(async () => {
+      if (cancelled) return;
+      if (!reference) {
+        setError("The payment return did not include a reference. Refresh access before trying to pay again.");
+        return;
+      }
+
+      try {
+        const response = await fetch("/api/payments/verify", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({ reference }),
+          cache: "no-store",
+        });
+        const result = await response.json() as {
+          verified?: boolean;
+          sport?: string;
+          error?: string;
+        };
+        if (cancelled) return;
+        if (!response.ok || !result.verified ||
+            (result.sport !== "NBA" && result.sport !== "Football")) {
+          setError(result.error ?? "Could not confirm payment. If you were charged, do not pay again; refresh access shortly.");
+          return;
+        }
+
+        setSport(result.sport);
+        setPaymentMessage(`${result.sport} payment confirmed. Your model access is active.`);
+        setError("");
+        setRefreshKey(value => value + 1);
+        const returnUrl = new URL(window.location.href);
+        returnUrl.searchParams.delete("payment");
+        returnUrl.searchParams.delete("reference");
+        returnUrl.searchParams.delete("trxref");
+        window.history.replaceState(window.history.state, "", returnUrl);
+      } catch {
+        if (!cancelled) {
+          setError("Could not confirm payment right now. If you were charged, do not pay again; refresh access shortly.");
+        }
+      }
+    });
+
+    return () => { cancelled = true; };
+  }, [accessToken]);
 
   useEffect(() => {
     if (!accessToken || !subscriptions.some(item =>
@@ -382,6 +438,7 @@ export default function Home() {
             <article className="stat-card"><div className="stat-heading"><span>Profit this month</span><div className="trend">+12.2%</div></div><strong>+₦80,000,000</strong><p>Across all markets</p></article>
             <article className="stat-card access-card"><div className="stat-heading"><span>{sport} access</span><span className={activeSubscription?"active-status":"locked-status"}>{activeSubscription?"Active":"Locked"}</span></div><strong>{activeSubscription?new Date(activeSubscription.expires_at).toLocaleDateString():"No active plan"}</strong><p>{activeSubscription?`Expires after your 30-day access period`:`${sport==="NBA"?"₦10,000":"₦50,000"} for 30 days`}</p></article>
           </section>
+          {paymentMessage && <p className="form-message dashboard-message" role="status">{paymentMessage}</p>}
           {error && <p className="form-error dashboard-error" role="alert">{error}</p>}
           <div className="access-refresh"><span>Model access is available only while your selected subscription is active.</span><button className="text-button" onClick={()=>setRefreshKey(value=>value+1)}>Refresh access</button></div>
 

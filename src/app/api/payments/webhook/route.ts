@@ -1,11 +1,10 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
-import { getMongoClient } from "@/lib/mongodb";
-
-const pricesKobo = {
-  NBA: 1_000_000,
-  Football: 5_000_000,
-} as const;
+import {
+  PaymentVerificationError,
+  recordVerifiedPayment,
+  verifyPaystackPayment,
+} from "@/lib/payments";
 
 export async function POST(request: Request) {
   const secret = process.env.PAYSTACK_SECRET_KEY;
@@ -37,88 +36,26 @@ export async function POST(request: Request) {
   }
 
   const reference = event.data?.reference;
-  const databaseName = process.env.MONGODB_DB_NAME;
-  if (!reference || !databaseName) {
+  if (!reference) {
     return NextResponse.json({ error: "Payment verification is not configured." }, { status: 503 });
   }
 
-  const verificationResponse = await fetch(
-    `https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`,
-    { headers: { Authorization: `Bearer ${secret}` }, cache: "no-store" },
-  );
-  const verification = await verificationResponse.json() as {
-    status?: boolean;
-    data?: {
-      status?: string;
-      reference?: string;
-      amount?: number;
-      currency?: string;
-      metadata?: { user_id?: string; sport?: string };
-    };
-  };
-  const data = verification.data;
-  const sport = data?.metadata?.sport;
-  if (!verificationResponse.ok || !verification.status || !data || data.status !== "success" ||
-      data.reference !== reference || data.currency !== "NGN" ||
-      (sport !== "NBA" && sport !== "Football") ||
-      typeof data.amount !== "number" || typeof data.metadata?.user_id !== "string") {
-    return NextResponse.json({ error: "Payment could not be verified." }, { status: 400 });
-  }
-  const userId = data.metadata.user_id;
-  const amountKobo = data.amount;
-  if (amountKobo !== pricesKobo[sport]) {
-    return NextResponse.json({ error: "Payment amount does not match the selected plan." }, { status: 400 });
-  }
-
-  const client = await getMongoClient();
-  const database = client.db(databaseName);
-  const payments = database.collection<{
-    _id: string;
-    userId: string;
-    sport: string;
-    amountKobo: number;
-    createdAt: Date;
-  }>("payments");
-  const subscriptions = database.collection<{
-    userId: string;
-    sport: string;
-    expiresAt: Date;
-    updatedAt: Date;
-  }>("subscriptions");
-  await subscriptions.createIndex({ userId: 1, sport: 1 }, { unique: true });
-  const session = client.startSession();
-  const now = new Date();
+  let payment;
   try {
-    await session.withTransaction(async () => {
-      await payments.insertOne({
-        _id: reference,
-        userId,
-        sport,
-        amountKobo,
-        createdAt: now,
-      }, { session });
-
-      const current = await subscriptions.findOne(
-        { userId, sport },
-        { session },
-      );
-      const currentExpiry = current?.expiresAt instanceof Date && current.expiresAt > now
-        ? current.expiresAt
-        : now;
-      const expiresAt = new Date(currentExpiry.getTime() + 30 * 24 * 60 * 60 * 1000);
-      await subscriptions.updateOne(
-        { userId, sport },
-        { $set: { expiresAt, updatedAt: now } },
-        { upsert: true, session },
-      );
-    });
+    payment = await verifyPaystackPayment(reference);
   } catch (error) {
-    const alreadyProcessed = await payments.findOne({ _id: reference });
-    if (alreadyProcessed) return NextResponse.json({ received: true });
+    if (error instanceof PaymentVerificationError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    console.error("Could not verify Paystack payment", error);
+    return NextResponse.json({ error: "Could not verify payment." }, { status: 502 });
+  }
+
+  try {
+    await recordVerifiedPayment(payment);
+  } catch (error) {
     console.error("Could not record verified payment", error);
     return NextResponse.json({ error: "Could not record subscription." }, { status: 500 });
-  } finally {
-    await session.endSession();
   }
 
   return NextResponse.json({ received: true });
