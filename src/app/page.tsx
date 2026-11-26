@@ -320,8 +320,30 @@ function Icon({ name, size = 20 }: { name:string; size?:number }) {
     bell:<><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></>,
     search:<><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></>,
     chevron:<path d="m9 18 6-6-6-6"/>,
+    moon:<path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5 8.5 8.5 0 1 0 20.5 14.5Z"/>,
+    sun:<><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/></>,
   };
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
+}
+
+function ThemeToggle({ darkMode, onToggle, className = "" }: {
+  darkMode: boolean;
+  onToggle: () => void;
+  className?: string;
+}) {
+  const label = darkMode ? "Switch to light mode" : "Switch to dark mode";
+  return (
+    <button
+      className={`icon-button theme-toggle ${className}`}
+      type="button"
+      aria-label={label}
+      aria-pressed={darkMode}
+      title={label}
+      onClick={onToggle}
+    >
+      <Icon name={darkMode ? "sun" : "moon"} />
+    </button>
+  );
 }
 
 function CommunityLinks() {
@@ -447,6 +469,7 @@ function PredictionHistory({
 }
 
 export default function Home() {
+  const [darkMode,setDarkMode] = useState(false);
   const [sport,setSport] = useState("Football");
   const [period,setPeriod] = useState("30 days");
   const [email,setEmail] = useState("");
@@ -481,6 +504,19 @@ export default function Home() {
   const [nbaGameLines,setNbaGameLines] = useState<Record<string,string>>({});
   const [nbaGameOutcomes,setNbaGameOutcomes] = useState<NbaGameOutcome[]>([]);
   const [predictionLoading,setPredictionLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.resolve().then(() => {
+      if (cancelled) return;
+      const savedTheme = window.localStorage.getItem("sportsense-theme");
+      const prefersDark = savedTheme === "dark" ||
+        (savedTheme !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+      document.documentElement.dataset.theme = prefersDark ? "dark" : "light";
+      setDarkMode(prefersDark);
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -959,9 +995,17 @@ export default function Home() {
     setAuthLoading(false);
   }
 
+  function toggleTheme() {
+    const nextDarkMode = !darkMode;
+    document.documentElement.dataset.theme = nextDarkMode ? "dark" : "light";
+    window.localStorage.setItem("sportsense-theme", nextDarkMode ? "dark" : "light");
+    setDarkMode(nextDarkMode);
+  }
+
   if (authLoading) return <div className="auth-page"><div className="auth-card">Loading your account…</div></div>;
   if (!userEmail) return (
     <div className="auth-page">
+      <ThemeToggle darkMode={darkMode} onToggle={toggleTheme} className="auth-theme-toggle" />
       <form className="auth-card" onSubmit={submitAuth}>
         <div className="brand auth-brand"><Image className="brand-logo" src="/sportsense-ai-logo.png" width={1140} height={200} alt="SportSense AI" /><Image className="brand-mark" src="/sportsense-ai-mark.svg" width={96} height={96} alt="" aria-hidden="true" /></div>
         <p className="eyebrow">MEMBER ACCESS</p>
@@ -1036,6 +1080,7 @@ export default function Home() {
         <header className="topbar">
           <div className="search"><Icon name="search" size={18}/><input aria-label="Search predictions" placeholder="Search predictions..."/><kbd>⌘ K</kbd></div>
           <div className="top-actions">
+            <ThemeToggle darkMode={darkMode} onToggle={toggleTheme} />
             <button className="icon-button" aria-label="Notifications"><Icon name="bell"/><span className="notification-dot"/></button>
             <button className="profile-button" onClick={()=>void signOut()} aria-label={`Sign out ${userEmail}`}><span>{userEmail.slice(0,2).toUpperCase()}</span><Icon name="chevron" size={16}/></button>
           </div>
