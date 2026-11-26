@@ -7,14 +7,16 @@ The site stores accounts, subscriptions, and generated prediction results in Mon
 1. In your existing MongoDB Atlas project, create a database user with read/write access only to the `formly` database. Copy its connection URI; URL-encode special characters in the password. Allow the Render service to connect through Atlas Network Access.
 2. Set the website environment variables from `.env.example` in Render. Generate a unique `AUTH_TOKEN_SECRET` with at least 32 random bytes. Keep the MongoDB URI, token secret, and Paystack secret private.
 3. Configure Paystack to send transaction webhooks to `/api/payments/webhook` on the deployed website. Successful payments are also verified when the customer returns to the site, so access does not depend on webhook delivery; duplicate processing does not extend a plan twice.
-4. Deploy the Premier League and NBA FastAPI projects as separate web services. Set each service's `FORMLY_API_URL` to the website URL. Use `python -m uvicorn api:app --host 0.0.0.0 --port $PORT` as the start command. The API checks the user's signed token and active subscription with the website before returning teams or predictions.
-5. Set the website's `FORMLY_FOOTBALL_API_URL` and `FORMLY_NBA_API_URL` to the deployed API service URLs. The dashboard calls the website's authenticated model routes, which proxy requests to the matching FastAPI service; it does not use the Streamlit apps.
+4. Deploy each FastAPI API as its own Render Web Service; the Streamlit URLs are browser apps, not the JSON APIs this dashboard calls. The NBA repository already defines an `nba-total-predictor-api` service in its `render.yaml` (health check `/api/health`). For Football, copy [`deployment/football-api.render.yaml`](./deployment/football-api.render.yaml) to the root of the `Premier-league` repository as `render.yaml`, then create a Render Blueprint from that repository. Its API service health check is `/health`. Both API services need `FORMLY_API_URL` set to this website's public base URL so they can verify the user's token and active subscription.
+5. In this website's Render environment, set `FORMLY_FOOTBALL_API_URL` and `FORMLY_NBA_API_URL` to the respective API service base URLs (not the Streamlit app URLs). The dashboard calls the website's authenticated model routes, which proxy requests to the matching FastAPI service. Confirm the APIs are running at `<football-api-url>/health` and `<nba-api-url>/api/health`.
 6. Keep model repositories private or move model files to private storage. A public repository can expose downloadable model files even when its API checks subscriptions.
 7. Deploy this project to Render as a **Web Service**, not a Static Site. The included `render.yaml` uses a paid Starter instance because authentication and payment verification need a running server.
 
 NBA access is ₦10,000 for 30 days; Football access is ₦50,000 for 30 days. This implementation does not send account-confirmation emails.
 
-NBA subscribers see games in the model's next-24-hour schedule, enter a bookmaker total for each matchup, and can request predictions for all displayed games.
+Football subscribers see fixtures and predictions from the Football model's next-24-hour schedule. The website requests this schedule from the Football API's `/api/fixtures` endpoint. NBA subscribers see games in the model's next-24-hour schedule, enter a bookmaker total for each matchup, and can request predictions for all displayed games.
+
+Sign-up collects full name, phone, country, region, city, and street address; gender and date of birth are optional. The Predictions tab shows saved NBA and Football predictions from the past seven days, after which records are automatically deleted.
 
 ## Development
 

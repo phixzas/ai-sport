@@ -4,6 +4,16 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 
 type Subscription = { sport: string; expires_at: string };
 type AuthResponse = { token?: string; email?: string; error?: string };
+type SignupProfile = {
+  fullName: string;
+  phoneNumber: string;
+  gender: string;
+  country: string;
+  region: string;
+  city: string;
+  streetAddress: string;
+  dateOfBirth: string;
+};
 type FootballPrediction = {
   home_team: string;
   away_team: string;
@@ -39,6 +49,10 @@ type NbaPrediction = {
     home: { report: string; out_count: number };
     away: { report: string; out_count: number };
   };
+  rest: {
+    home: { days: number; actual_days: number };
+    away: { days: number; actual_days: number };
+  };
 };
 type NbaGame = {
   id: string;
@@ -53,6 +67,34 @@ type NbaGameOutcome = {
   result?: NbaPrediction;
   error?: string;
 };
+type PredictionHistoryItem =
+  | {
+      id: string;
+      sport: "NBA";
+      input: { home_team: string; away_team: string; line: number };
+      result: NbaPrediction;
+      createdAt: string;
+    }
+  | {
+      id: string;
+      sport: "Football";
+      input: { home_team: string; away_team: string; kickoff?: string };
+      result: FootballPrediction;
+      createdAt: string;
+    };
+
+function emptySignupProfile(): SignupProfile {
+  return {
+    fullName: "",
+    phoneNumber: "",
+    gender: "",
+    country: "",
+    region: "",
+    city: "",
+    streetAddress: "",
+    dateOfBirth: "",
+  };
+}
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -90,7 +132,8 @@ function isFootballGame(value: unknown): value is FootballGame {
 
 function isNbaPrediction(value: unknown): value is NbaPrediction {
   if (!isRecord(value) || !isRecord(value.injuries) ||
-      !isRecord(value.injuries.home) || !isRecord(value.injuries.away)) return false;
+      !isRecord(value.injuries.home) || !isRecord(value.injuries.away) ||
+      !isRecord(value.rest) || !isRecord(value.rest.home) || !isRecord(value.rest.away)) return false;
   return typeof value.home_team === "string" &&
     typeof value.away_team === "string" &&
     typeof value.line === "number" &&
@@ -104,7 +147,11 @@ function isNbaPrediction(value: unknown): value is NbaPrediction {
     typeof value.injuries.home.report === "string" &&
     typeof value.injuries.home.out_count === "number" &&
     typeof value.injuries.away.report === "string" &&
-    typeof value.injuries.away.out_count === "number";
+    typeof value.injuries.away.out_count === "number" &&
+    typeof value.rest.home.days === "number" &&
+    typeof value.rest.home.actual_days === "number" &&
+    typeof value.rest.away.days === "number" &&
+    typeof value.rest.away.actual_days === "number";
 }
 
 function isNbaGame(value: unknown): value is NbaGame {
@@ -114,6 +161,23 @@ function isNbaGame(value: unknown): value is NbaGame {
     typeof value.away === "string" &&
     typeof value.status === "string" &&
     (typeof value.startTime === "string" || value.startTime === null);
+}
+
+function isPredictionHistoryItem(value: unknown): value is PredictionHistoryItem {
+  if (!isRecord(value) || typeof value.id !== "string" ||
+      typeof value.createdAt !== "string" || Number.isNaN(Date.parse(value.createdAt)) ||
+      !isRecord(value.input)) return false;
+  if (typeof value.input.home_team !== "string" || typeof value.input.away_team !== "string") {
+    return false;
+  }
+  if (value.sport === "NBA") {
+    return typeof value.input.line === "number" && isNbaPrediction(value.result);
+  }
+  if (value.sport === "Football") {
+    return (value.input.kickoff === undefined || typeof value.input.kickoff === "string") &&
+      isFootballPrediction(value.result);
+  }
+  return false;
 }
 
 async function readAuthResponse(response: Response): Promise<AuthResponse | null> {
@@ -140,6 +204,75 @@ function Icon({ name, size = 20 }: { name:string; size?:number }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
 
+function PredictionHistory({
+  items,
+  loading,
+  error,
+  onRefresh,
+}: {
+  items: PredictionHistoryItem[];
+  loading: boolean;
+  error: string;
+  onRefresh: () => void;
+}) {
+  return (
+    <>
+      <section className="welcome">
+        <div><p className="eyebrow">MEMBER DASHBOARD</p><h1>Prediction history</h1></div>
+        <button className="secondary-button" type="button" onClick={onRefresh} disabled={loading}>Refresh</button>
+      </section>
+      <p className="prediction-history-note">Predictions are kept for 7 days and then deleted automatically.</p>
+      {error && <p className="form-error dashboard-error" role="alert">{error}</p>}
+      {loading ? (
+        <p className="nba-games-empty">Loading prediction history…</p>
+      ) : items.length === 0 && !error ? (
+        <p className="nba-games-empty">No predictions have been saved in the last 7 days.</p>
+      ) : (
+        <div className="prediction-history-list">
+          {items.map(item => (
+            <article className="panel prediction-history-card" key={item.id}>
+              <div className="prediction-history-heading">
+                <p className="eyebrow">{item.sport} · Saved {new Date(item.createdAt).toLocaleString()}</p>
+                <h2>{item.sport === "NBA"
+                  ? `${item.input.away_team} @ ${item.input.home_team}`
+                  : `${item.input.home_team} vs ${item.input.away_team}`}
+                </h2>
+              </div>
+              <div className="prediction-result prediction-history-result">
+                {item.sport === "NBA" ? (
+                  <>
+                    <p>Predicted total <strong>{item.result.predicted_total.toFixed(1)}</strong> · Line <strong>{item.input.line}</strong></p>
+                    <p>Pick <strong>{item.result.pick}</strong> · Edge <strong>{item.result.edge > 0 ? "+" : ""}{item.result.edge.toFixed(1)}</strong></p>
+                    {item.result.winner && (
+                      <p>Likely winner <strong>{item.result.winner}</strong>
+                        {item.result.winner_probability !== null
+                          ? ` (${(item.result.winner_probability * 100).toFixed(1)}%)`
+                          : ""}
+                      </p>
+                    )}
+                    <p>Injuries: {item.result.injuries.home.report || "None reported"} · {item.result.injuries.away.report || "None reported"}</p>
+                    <p>Rest: HOME {item.result.rest.home.days} ({item.result.rest.home.actual_days}d)
+                      {" · "}AWAY {item.result.rest.away.days} ({item.result.rest.away.actual_days}d)
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    {item.input.kickoff && <p>Kickoff <strong>{item.input.kickoff} (UK time)</strong></p>}
+                    <p>Expected goals <strong>{item.result.expected_home_goals.toFixed(2)} – {item.result.expected_away_goals.toFixed(2)}</strong></p>
+                    <p>1X2 <strong>{item.result.home_win_probability_pct.toFixed(1)}% / {item.result.draw_probability_pct.toFixed(1)}% / {item.result.away_win_probability_pct.toFixed(1)}%</strong></p>
+                    <p>Over 2.5 <strong>{item.result.over_2_5_probability_pct.toFixed(1)}%</strong> · Under 2.5 <strong>{item.result.under_2_5_probability_pct.toFixed(1)}%</strong></p>
+                    <p>Most likely score <strong>{item.result.most_likely_score}</strong></p>
+                  </>
+                )}
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
 export default function Home() {
   const [sport,setSport] = useState("Football");
   const [period,setPeriod] = useState("30 days");
@@ -150,6 +283,12 @@ export default function Home() {
   const [subscriptions,setSubscriptions] = useState<Subscription[]>([]);
   const [authLoading,setAuthLoading] = useState(true);
   const [authMode,setAuthMode] = useState<"signIn"|"signUp">("signIn");
+  const [signupProfile,setSignupProfile] = useState<SignupProfile>(emptySignupProfile);
+  const [activeView,setActiveView] = useState<"overview"|"predictions">("overview");
+  const [predictionHistory,setPredictionHistory] = useState<PredictionHistoryItem[]>([]);
+  const [predictionHistoryLoading,setPredictionHistoryLoading] = useState(false);
+  const [predictionHistoryError,setPredictionHistoryError] = useState("");
+  const [predictionHistoryRefresh,setPredictionHistoryRefresh] = useState(0);
   const [message,setMessage] = useState("");
   const [paymentMessage,setPaymentMessage] = useState("");
   const [error,setError] = useState("");
@@ -205,6 +344,43 @@ export default function Home() {
     })();
     return () => { cancelled = true; };
   }, [accessToken,refreshKey]);
+
+  useEffect(() => {
+    if (!accessToken || activeView !== "predictions") return;
+    let cancelled = false;
+    void Promise.resolve().then(async () => {
+      if (cancelled) return;
+      setPredictionHistoryLoading(true);
+      setPredictionHistoryError("");
+      try {
+        const response = await fetch("/api/predictions", {
+          headers: { Authorization: `Bearer ${accessToken}` },
+          cache: "no-store",
+        });
+        const result: unknown = await response.json();
+        if (cancelled) return;
+        if (!response.ok) {
+          setPredictionHistoryError(getApiError(result) ?? "Could not load prediction history.");
+          setPredictionHistory([]);
+          return;
+        }
+        if (!Array.isArray(result) || !result.every(isPredictionHistoryItem)) {
+          setPredictionHistoryError("The prediction history returned invalid data.");
+          setPredictionHistory([]);
+          return;
+        }
+        setPredictionHistory(result);
+      } catch {
+        if (!cancelled) {
+          setPredictionHistoryError("Could not load prediction history. Please try again.");
+          setPredictionHistory([]);
+        }
+      } finally {
+        if (!cancelled) setPredictionHistoryLoading(false);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [accessToken,activeView,predictionHistoryRefresh]);
 
   useEffect(() => {
     if (!accessToken) return;
@@ -359,7 +535,9 @@ export default function Home() {
       const response = await fetch(authMode === "signUp" ? "/api/auth/register" : "/api/auth/login", {
         method:"POST",
         headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({email,password}),
+        body:JSON.stringify(authMode === "signUp"
+          ? { email, password, ...signupProfile }
+          : { email, password }),
       });
       const result = await readAuthResponse(response);
       if (!result) {
@@ -377,6 +555,7 @@ export default function Home() {
       window.localStorage.setItem("formly_token",result.token);
       setAccessToken(result.token);
       setPassword("");
+      setSignupProfile(emptySignupProfile());
     } catch {
       setError("Could not connect to the account service. Please try again.");
     }
@@ -501,6 +680,23 @@ export default function Home() {
         <p className="auth-copy">Sign in to manage subscriptions and access your sports models.</p>
         <label>Email<input type="email" autoComplete="email" required value={email} onChange={event=>setEmail(event.target.value)}/></label>
         <label>Password<input type="password" autoComplete={authMode === "signIn" ? "current-password" : "new-password"} minLength={8} required value={password} onChange={event=>setPassword(event.target.value)}/></label>
+        {authMode === "signUp" && (
+          <>
+            <label>Full name<input type="text" autoComplete="name" minLength={2} maxLength={120} required value={signupProfile.fullName} onChange={event=>setSignupProfile(current=>({...current,fullName:event.target.value}))}/></label>
+            <label>Phone number<input type="tel" autoComplete="tel" maxLength={25} required value={signupProfile.phoneNumber} onChange={event=>setSignupProfile(current=>({...current,phoneNumber:event.target.value}))}/></label>
+            <label>Gender (optional)
+              <select value={signupProfile.gender} onChange={event=>setSignupProfile(current=>({...current,gender:event.target.value}))}>
+                <option value="">Select gender</option>
+                <option>Female</option><option>Male</option><option>Non-binary</option><option>Other</option><option>Prefer not to say</option>
+              </select>
+            </label>
+            <label>Country<input type="text" autoComplete="country-name" maxLength={100} required value={signupProfile.country} onChange={event=>setSignupProfile(current=>({...current,country:event.target.value}))}/></label>
+            <label>State or region<input type="text" autoComplete="address-level1" maxLength={100} required value={signupProfile.region} onChange={event=>setSignupProfile(current=>({...current,region:event.target.value}))}/></label>
+            <label>City<input type="text" autoComplete="address-level2" maxLength={100} required value={signupProfile.city} onChange={event=>setSignupProfile(current=>({...current,city:event.target.value}))}/></label>
+            <label>Street address<input type="text" autoComplete="street-address" maxLength={200} required value={signupProfile.streetAddress} onChange={event=>setSignupProfile(current=>({...current,streetAddress:event.target.value}))}/></label>
+            <label>Date of birth (optional)<input type="date" autoComplete="bday" value={signupProfile.dateOfBirth} onChange={event=>setSignupProfile(current=>({...current,dateOfBirth:event.target.value}))}/></label>
+          </>
+        )}
         {error && <p className="form-error" role="alert">{error}</p>}
         {message && <p className="form-message" role="status">{message}</p>}
         <button className="primary-button auth-submit" type="submit">{authMode === "signIn" ? "Sign in" : "Create account"}</button>
@@ -518,8 +714,8 @@ export default function Home() {
       <aside className="sidebar">
         <div className="brand"><div className="brand-mark"><svg viewBox="0 0 32 32"><path d="M16 3v26M3 16h26M7 7l18 18M25 7 7 25"/><circle cx="16" cy="16" r="7"/></svg></div><span>SportSense AI</span></div>
         <nav className="main-nav" aria-label="Main navigation">
-          <button className="nav-item active"><Icon name="grid"/><span>Overview</span></button>
-          <button className="nav-item"><Icon name="trophy"/><span>Predictions</span></button>
+          <button className={`nav-item ${activeView === "overview" ? "active" : ""}`} onClick={() => setActiveView("overview")}><Icon name="grid"/><span>Overview</span></button>
+          <button className={`nav-item ${activeView === "predictions" ? "active" : ""}`} onClick={() => setActiveView("predictions")}><Icon name="trophy"/><span>Predictions</span></button>
           <button className="nav-item"><Icon name="chart"/><span>Performance</span></button>
           <button className="nav-item"><Icon name="wallet"/><span>Subscription</span></button>
         </nav>
@@ -539,6 +735,15 @@ export default function Home() {
         </header>
 
         <div className="content">
+          {activeView === "predictions" ? (
+            <PredictionHistory
+              items={predictionHistory}
+              loading={predictionHistoryLoading}
+              error={predictionHistoryError}
+              onRefresh={() => setPredictionHistoryRefresh(value => value + 1)}
+            />
+          ) : (
+            <>
           <section className="welcome"><div><p className="eyebrow">MEMBER DASHBOARD</p><h1>Welcome back</h1></div><button className="primary-button" onClick={()=>void openModel()}>{activeSubscription?`Get ${sport} predictions`:`Subscribe to ${sport}`}</button></section>
 
           <section className="sport-tabs" aria-label="Choose sport">
@@ -547,7 +752,7 @@ export default function Home() {
 
           <section className="stats-grid">
             <article className="stat-card"><div className="stat-heading"><span>Winning rate</span><div className="trend">+4.8%</div></div><strong>86.5%</strong><div className="progress"><span style={{width:"86.5%"}}/></div><p>Last 30 predictions</p></article>
-            <article className="stat-card"><div className="stat-heading"><span>Profit this month</span><div className="trend">+12.2%</div></div><strong>+₦80,000,000</strong><p>Across all markets</p></article>
+            <article className="stat-card"><div className="stat-heading"><span>Profit this month</span><div className="trend">+12.2%</div></div><strong>+₦85,878,869</strong><p>Across all markets</p></article>
             <article className="stat-card access-card"><div className="stat-heading"><span>{sport} access</span><span className={activeSubscription?"active-status":"locked-status"}>{activeSubscription?"Active":"Locked"}</span></div><strong>{activeSubscription?new Date(activeSubscription.expires_at).toLocaleDateString():"No active plan"}</strong><p>{activeSubscription?`Expires after your 30-day access period`:`${sport==="NBA"?"₦10,000":"₦50,000"} for 30 days`}</p></article>
           </section>
           {paymentMessage && <p className="form-message dashboard-message" role="status">{paymentMessage}</p>}
@@ -618,6 +823,10 @@ export default function Home() {
                                       Injuries: {game.home} — {outcome.result.injuries.home.report || "None reported"};
                                       {" "}{game.away} — {outcome.result.injuries.away.report || "None reported"}
                                     </p>
+                                    <p>
+                                      Rest: HOME {outcome.result.rest.home.days} ({outcome.result.rest.home.actual_days}d)
+                                      {" · "}AWAY {outcome.result.rest.away.days} ({outcome.result.rest.away.actual_days}d)
+                                    </p>
                                   </div>
                                 )}
                               </article>
@@ -647,7 +856,7 @@ export default function Home() {
                               <p>Expected goals <strong>{game.prediction.expected_home_goals.toFixed(2)} – {game.prediction.expected_away_goals.toFixed(2)}</strong></p>
                               <p>1X2 <strong>{game.prediction.home_win_probability_pct.toFixed(1)}% / {game.prediction.draw_probability_pct.toFixed(1)}% / {game.prediction.away_win_probability_pct.toFixed(1)}%</strong></p>
                               <p>Over 2.5 <strong>{game.prediction.over_2_5_probability_pct.toFixed(1)}%</strong> · Under 2.5 <strong>{game.prediction.under_2_5_probability_pct.toFixed(1)}%</strong></p>
-                              <p>Most likely score <strong>{game.prediction.most_likely_score}</strong> ({game.prediction.most_likely_score_probability_pct.toFixed(1)}%)</p>
+                              <p>Most likely score <strong>{game.prediction.most_likely_score}</strong></p>
                             </div>
                           </article>
                         ))}
@@ -682,6 +891,8 @@ export default function Home() {
               <article className="panel plan-panel"><div><p className="eyebrow">CURRENT PLAN</p><h2>{sport} Premium</h2></div><div className="plan-price">{sport==="NBA"?"₦10,000":"₦50,000"}<span>/30 days</span></div><button className="secondary-button">Manage subscription</button></article>
             </aside>
           </section>
+            </>
+          )}
         </div>
       </main>
     </div>

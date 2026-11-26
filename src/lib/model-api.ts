@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getBearerToken, verifyAuthToken } from "@/lib/auth";
-import { getDatabase } from "@/lib/mongodb";
+import { getPredictionsCollection } from "@/lib/predictions";
 
 type ModelSport = "NBA" | "Football";
 
@@ -13,6 +13,15 @@ const modelApiConfiguration = {
     gamesPath: "/api/fixtures",
   },
 } satisfies Record<ModelSport, { environmentVariable: string; teamsPath: string; predictPath: string; gamesPath?: string }>;
+
+type ScheduledFootballPrediction = {
+  input: { home_team: string; away_team: string; kickoff: string };
+  result: Record<string, unknown>;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
 
 export async function forwardModelRequest(
   request: Request,
@@ -61,29 +70,76 @@ export async function forwardModelRequest(
       },
     );
     const responseBody = await response.text();
-    if (endpoint === "predict" && response.ok) {
+    if ((endpoint === "predict" || endpoint === "games") && response.ok) {
       let input: unknown;
       let result: unknown;
+      const scheduledPredictions: ScheduledFootballPrediction[] = [];
       try {
-        input = JSON.parse(body ?? "");
         result = JSON.parse(responseBody);
+        if (endpoint === "predict") {
+          input = JSON.parse(body ?? "");
+        } else {
+          if (!isRecord(result) || !Array.isArray(result.fixtures)) {
+            throw new Error("The Football model returned invalid fixture data.");
+          }
+          for (const fixture of result.fixtures) {
+            if (!isRecord(fixture) || typeof fixture.home_team !== "string" ||
+                typeof fixture.away_team !== "string" || typeof fixture.kickoff !== "string" ||
+                !isRecord(fixture.prediction)) {
+              throw new Error("The Football model returned invalid fixture data.");
+            }
+            scheduledPredictions.push({
+              input: {
+                home_team: fixture.home_team,
+                away_team: fixture.away_team,
+                kickoff: fixture.kickoff,
+              },
+              result: fixture.prediction,
+            });
+          }
+        }
       } catch (error) {
-        console.error(`${sport} model returned an invalid prediction response`, error);
+        console.error(`${sport} model returned invalid prediction data`, error);
         return NextResponse.json(
-          { error: "The model returned an invalid prediction response." },
+          { error: "The model returned invalid prediction data." },
           { status: 502 },
         );
       }
 
       try {
-        const database = await getDatabase();
-        await database.collection("predictions").insertOne({
-          userId: user.id,
-          sport,
-          input,
-          result,
-          createdAt: new Date(),
-        });
+        const predictions = await getPredictionsCollection();
+        if (endpoint === "predict") {
+          await predictions.insertOne({
+            userId: user.id,
+            sport,
+            input,
+            result,
+            createdAt: new Date(),
+          });
+        } else if (scheduledPredictions.length > 0) {
+          const createdAt = new Date();
+          await predictions.bulkWrite(scheduledPredictions.map(prediction => ({
+            updateOne: {
+              filter: {
+                userId: user.id,
+                sport,
+                "input.home_team": prediction.input.home_team,
+                "input.away_team": prediction.input.away_team,
+                "input.kickoff": prediction.input.kickoff,
+              },
+              update: {
+                $set: {
+                  userId: user.id,
+                  sport,
+                  input: prediction.input,
+                  result: prediction.result,
+                  createdAt,
+                },
+              },
+              upsert: true,
+            },
+          })));
+        }
       } catch (error) {
         console.error(`Could not save ${sport} prediction`, error);
         return NextResponse.json(
