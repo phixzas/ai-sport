@@ -67,13 +67,20 @@ type NbaGameOutcome = {
   result?: NbaPrediction;
   error?: string;
 };
+type ActualMatchResult = {
+  status: "In Progress" | "Final";
+  homeScore: number;
+  awayScore: number;
+  updatedAt: string;
+};
 type PredictionHistoryItem =
   | {
       id: string;
       sport: "NBA";
-      input: { home_team: string; away_team: string; line: number };
+      input: { home_team: string; away_team: string; line: number; game_id?: string; start_time?: string | null };
       result: NbaPrediction;
       createdAt: string;
+      actualResult: ActualMatchResult | null;
     }
   | {
       id: string;
@@ -81,6 +88,7 @@ type PredictionHistoryItem =
       input: { home_team: string; away_team: string; kickoff?: string };
       result: FootballPrediction;
       createdAt: string;
+      actualResult: ActualMatchResult | null;
     };
 
 function emptySignupProfile(): SignupProfile {
@@ -166,12 +174,23 @@ function isNbaGame(value: unknown): value is NbaGame {
 function isPredictionHistoryItem(value: unknown): value is PredictionHistoryItem {
   if (!isRecord(value) || typeof value.id !== "string" ||
       typeof value.createdAt !== "string" || Number.isNaN(Date.parse(value.createdAt)) ||
-      !isRecord(value.input)) return false;
+      !isRecord(value.input) ||
+      !(value.actualResult === null || (
+        isRecord(value.actualResult) &&
+        (value.actualResult.status === "Final" || value.actualResult.status === "In Progress") &&
+        typeof value.actualResult.homeScore === "number" &&
+        typeof value.actualResult.awayScore === "number" &&
+        typeof value.actualResult.updatedAt === "string" &&
+        !Number.isNaN(Date.parse(value.actualResult.updatedAt))
+      ))) return false;
   if (typeof value.input.home_team !== "string" || typeof value.input.away_team !== "string") {
     return false;
   }
   if (value.sport === "NBA") {
-    return typeof value.input.line === "number" && isNbaPrediction(value.result);
+    return typeof value.input.line === "number" &&
+      (value.input.game_id === undefined || typeof value.input.game_id === "string") &&
+      (value.input.start_time === undefined || typeof value.input.start_time === "string" || value.input.start_time === null) &&
+      isNbaPrediction(value.result);
   }
   if (value.sport === "Football") {
     return (value.input.kickoff === undefined || typeof value.input.kickoff === "string") &&
@@ -208,12 +227,18 @@ function PredictionHistory({
   items,
   loading,
   error,
+  scoreUpdateError,
+  deletingId,
   onRefresh,
+  onDelete,
 }: {
   items: PredictionHistoryItem[];
   loading: boolean;
   error: string;
+  scoreUpdateError: string;
+  deletingId: string | null;
   onRefresh: () => void;
+  onDelete: (id: string) => void;
 }) {
   return (
     <>
@@ -222,7 +247,9 @@ function PredictionHistory({
         <button className="secondary-button" type="button" onClick={onRefresh} disabled={loading}>Refresh</button>
       </section>
       <p className="prediction-history-note">Predictions are kept for 7 days and then deleted automatically.</p>
+      <p className="prediction-history-note">Football results are full-time scores: 90 minutes plus stoppage time, with no extra time.</p>
       {error && <p className="form-error dashboard-error" role="alert">{error}</p>}
+      {scoreUpdateError && <p className="form-error dashboard-error" role="alert">{scoreUpdateError}</p>}
       {loading ? (
         <p className="nba-games-empty">Loading prediction history…</p>
       ) : items.length === 0 && !error ? (
@@ -231,14 +258,36 @@ function PredictionHistory({
         <div className="prediction-history-list">
           {items.map(item => (
             <article className="panel prediction-history-card" key={item.id}>
-              <div className="prediction-history-heading">
-                <p className="eyebrow">{item.sport} · Saved {new Date(item.createdAt).toLocaleString()}</p>
-                <h2>{item.sport === "NBA"
-                  ? `${item.input.away_team} @ ${item.input.home_team}`
-                  : `${item.input.home_team} vs ${item.input.away_team}`}
-                </h2>
+              <div className="prediction-history-header">
+                <div className="prediction-history-heading">
+                  <p className="eyebrow">{item.sport} · Saved {new Date(item.createdAt).toLocaleString()}</p>
+                  <h2>{item.sport === "NBA"
+                    ? `${item.input.away_team} @ ${item.input.home_team}`
+                    : `${item.input.home_team} vs ${item.input.away_team}`}
+                  </h2>
+                </div>
+                <button
+                  className="prediction-delete-button"
+                  type="button"
+                  disabled={deletingId === item.id}
+                  onClick={() => {
+                    if (window.confirm("Delete this saved prediction? This cannot be undone.")) {
+                      onDelete(item.id);
+                    }
+                  }}
+                >
+                  {deletingId === item.id ? "Deleting…" : "Delete"}
+                </button>
               </div>
               <div className="prediction-result prediction-history-result">
+                {item.actualResult ? (
+                  <p className="actual-match-result">
+                    {item.actualResult.status === "Final" ? "Final result" : "Live score"}{" "}
+                    <strong>{item.actualResult.homeScore} – {item.actualResult.awayScore}</strong>
+                  </p>
+                ) : (
+                  <p className="actual-match-result">Final result pending</p>
+                )}
                 {item.sport === "NBA" ? (
                   <>
                     <p>Predicted total <strong>{item.result.predicted_total.toFixed(1)}</strong> · Line <strong>{item.input.line}</strong></p>
@@ -288,6 +337,8 @@ export default function Home() {
   const [predictionHistory,setPredictionHistory] = useState<PredictionHistoryItem[]>([]);
   const [predictionHistoryLoading,setPredictionHistoryLoading] = useState(false);
   const [predictionHistoryError,setPredictionHistoryError] = useState("");
+  const [predictionScoreUpdateError,setPredictionScoreUpdateError] = useState("");
+  const [predictionDeletingId,setPredictionDeletingId] = useState<string|null>(null);
   const [predictionHistoryRefresh,setPredictionHistoryRefresh] = useState(0);
   const [message,setMessage] = useState("");
   const [paymentMessage,setPaymentMessage] = useState("");
@@ -347,11 +398,20 @@ export default function Home() {
 
   useEffect(() => {
     if (!accessToken || activeView !== "predictions") return;
+    const intervalId = window.setInterval(() => {
+      setPredictionHistoryRefresh(value => value + 1);
+    }, 60_000);
+    return () => window.clearInterval(intervalId);
+  }, [accessToken,activeView]);
+
+  useEffect(() => {
+    if (!accessToken || activeView !== "predictions") return;
     let cancelled = false;
     void Promise.resolve().then(async () => {
       if (cancelled) return;
       setPredictionHistoryLoading(true);
       setPredictionHistoryError("");
+      setPredictionScoreUpdateError("");
       try {
         const response = await fetch("/api/predictions", {
           headers: { Authorization: `Bearer ${accessToken}` },
@@ -364,12 +424,16 @@ export default function Home() {
           setPredictionHistory([]);
           return;
         }
-        if (!Array.isArray(result) || !result.every(isPredictionHistoryItem)) {
+        if (!isRecord(result) || !Array.isArray(result.predictions) ||
+            !result.predictions.every(isPredictionHistoryItem)) {
           setPredictionHistoryError("The prediction history returned invalid data.");
           setPredictionHistory([]);
           return;
         }
-        setPredictionHistory(result);
+        setPredictionHistory(result.predictions);
+        if (typeof result.scoreUpdateError === "string") {
+          setPredictionScoreUpdateError(result.scoreUpdateError);
+        }
       } catch {
         if (!cancelled) {
           setPredictionHistoryError("Could not load prediction history. Please try again.");
@@ -561,6 +625,31 @@ export default function Home() {
     }
   }
 
+  async function deletePrediction(id: string) {
+    setPredictionDeletingId(id);
+    setPredictionHistoryError("");
+    try {
+      const response = await fetch("/api/predictions", {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ id }),
+      });
+      const result: unknown = await response.json();
+      if (!response.ok) {
+        setPredictionHistoryError(getApiError(result) ?? "Could not delete prediction.");
+        return;
+      }
+      setPredictionHistory(current => current.filter(item => item.id !== id));
+    } catch {
+      setPredictionHistoryError("Could not delete prediction. Please try again.");
+    } finally {
+      setPredictionDeletingId(null);
+    }
+  }
+
   async function startPayment() {
     setError("");
     if (!accessToken) {
@@ -629,6 +718,8 @@ export default function Home() {
               home_team: game.home,
               away_team: game.away,
               line: gameLine,
+              game_id: game.id,
+              start_time: game.startTime,
             }),
           });
           let result: unknown;
@@ -726,8 +817,8 @@ export default function Home() {
       <aside className="sidebar">
         <div className="brand"><div className="brand-mark"><svg viewBox="0 0 32 32"><path d="M16 3v26M3 16h26M7 7l18 18M25 7 7 25"/><circle cx="16" cy="16" r="7"/></svg></div><span>SportSense AI</span></div>
         <nav className="main-nav" aria-label="Main navigation">
-          <button className={`nav-item ${activeView === "overview" ? "active" : ""}`} onClick={() => setActiveView("overview")}><Icon name="grid"/><span>Overview</span></button>
-          <button className={`nav-item ${activeView === "predictions" ? "active" : ""}`} onClick={() => setActiveView("predictions")}><Icon name="trophy"/><span>Predictions</span></button>
+          <button className={`nav-item ${activeView === "overview" ? "active" : ""}`} aria-current={activeView === "overview" ? "page" : undefined} onClick={() => setActiveView("overview")}><Icon name="grid"/><span>Overview</span></button>
+          <button className={`nav-item ${activeView === "predictions" ? "active" : ""}`} aria-current={activeView === "predictions" ? "page" : undefined} onClick={() => setActiveView("predictions")}><Icon name="trophy"/><span>Predictions</span></button>
           <button className="nav-item"><Icon name="chart"/><span>Performance</span></button>
           <button className="nav-item"><Icon name="wallet"/><span>Subscription</span></button>
         </nav>
@@ -752,7 +843,10 @@ export default function Home() {
               items={predictionHistory}
               loading={predictionHistoryLoading}
               error={predictionHistoryError}
+              scoreUpdateError={predictionScoreUpdateError}
+              deletingId={predictionDeletingId}
               onRefresh={() => setPredictionHistoryRefresh(value => value + 1)}
+              onDelete={id => void deletePrediction(id)}
             />
           ) : (
             <>
