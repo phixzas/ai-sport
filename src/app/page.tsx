@@ -631,7 +631,19 @@ export default function Home() {
               line: gameLine,
             }),
           });
-          const result: unknown = await response.json();
+          let result: unknown;
+          try {
+            result = await response.json();
+          } catch {
+            outcome = {
+              gameId: game.id,
+              line: gameLine,
+              error: `The NBA service returned a non-JSON response (HTTP ${response.status}). Check that FORMLY_NBA_API_URL points to the FastAPI service, not the Streamlit app.`,
+            };
+            outcomes.push(outcome);
+            setNbaGameOutcomes([...outcomes]);
+            continue;
+          }
           if (!response.ok) {
             outcome = {
               gameId: game.id,
