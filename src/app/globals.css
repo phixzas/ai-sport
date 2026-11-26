@@ -114,6 +114,8 @@ button { cursor:pointer; }
 .nba-schedule-caption { margin:0 0 12px; color:#858391; font-size:11px; }
 .nba-games-list { display:flex; flex-direction:column; gap:10px; }
 .nba-game-card { display:grid; grid-template-columns:minmax(0,1fr) minmax(180px,230px); align-items:center; gap:12px 16px; padding:14px; border:1px solid #eeedf2; border-radius:8px; }
+.football-game-card { padding:14px; border:1px solid #eeedf2; border-radius:8px; }
+.football-game-result { margin-top:12px; }
 .nba-game-title { margin:0; font-size:14px; }
 .nba-game-status { margin:6px 0 0; color:#858391; font-size:11px; }
 .nba-line-field { display:flex; flex-direction:column; gap:7px; color:#5f5d6a; font-size:12px; font-weight:700; }

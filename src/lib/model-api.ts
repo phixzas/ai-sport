@@ -6,13 +6,18 @@ type ModelSport = "NBA" | "Football";
 
 const modelApiConfiguration = {
   NBA: { environmentVariable: "FORMLY_NBA_API_URL", teamsPath: "/api/teams", predictPath: "/api/predict" },
-  Football: { environmentVariable: "FORMLY_FOOTBALL_API_URL", teamsPath: "/teams", predictPath: "/predict" },
-} satisfies Record<ModelSport, { environmentVariable: string; teamsPath: string; predictPath: string }>;
+  Football: {
+    environmentVariable: "FORMLY_FOOTBALL_API_URL",
+    teamsPath: "/teams",
+    predictPath: "/predict",
+    gamesPath: "/api/fixtures",
+  },
+} satisfies Record<ModelSport, { environmentVariable: string; teamsPath: string; predictPath: string; gamesPath?: string }>;
 
 export async function forwardModelRequest(
   request: Request,
   sport: ModelSport,
-  endpoint: "teams" | "predict",
+  endpoint: "teams" | "predict" | "games",
 ) {
   const token = getBearerToken(request);
   const user = token ? verifyAuthToken(token) : null;
@@ -21,6 +26,16 @@ export async function forwardModelRequest(
   }
 
   const configuration = modelApiConfiguration[sport];
+  const path = endpoint === "games"
+    ? ("gamesPath" in configuration ? configuration.gamesPath : null)
+    : configuration[endpoint === "teams" ? "teamsPath" : "predictPath"];
+  if (!path) {
+    return NextResponse.json(
+      { error: `${sport} games endpoint is not configured.` },
+      { status: 503 },
+    );
+  }
+
   const baseUrl = process.env[configuration.environmentVariable]?.replace(/\/+$/, "");
   if (!baseUrl) {
     return NextResponse.json(
@@ -29,11 +44,11 @@ export async function forwardModelRequest(
     );
   }
 
-  const method = endpoint === "teams" ? "GET" : "POST";
+  const method = endpoint === "predict" ? "POST" : "GET";
   const body = method === "POST" ? await request.text() : undefined;
   try {
     const response = await fetch(
-      `${baseUrl}${configuration[endpoint === "teams" ? "teamsPath" : "predictPath"]}`,
+      `${baseUrl}${path}`,
       {
         method,
         headers: {

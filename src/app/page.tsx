@@ -17,6 +17,13 @@ type FootballPrediction = {
   most_likely_score: string;
   most_likely_score_probability_pct: number;
 };
+type FootballGame = {
+  home_team: string;
+  away_team: string;
+  kickoff: string;
+  status: string;
+  prediction: FootballPrediction;
+};
 type NbaPrediction = {
   home_team: string;
   away_team: string;
@@ -46,8 +53,6 @@ type NbaGameOutcome = {
   result?: NbaPrediction;
   error?: string;
 };
-type Prediction = { sport: "Football"; result: FootballPrediction };
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -72,6 +77,15 @@ function isFootballPrediction(value: unknown): value is FootballPrediction {
     typeof value.under_2_5_probability_pct === "number" &&
     typeof value.most_likely_score === "string" &&
     typeof value.most_likely_score_probability_pct === "number";
+}
+
+function isFootballGame(value: unknown): value is FootballGame {
+  return isRecord(value) &&
+    typeof value.home_team === "string" &&
+    typeof value.away_team === "string" &&
+    typeof value.kickoff === "string" &&
+    typeof value.status === "string" &&
+    isFootballPrediction(value.prediction);
 }
 
 function isNbaPrediction(value: unknown): value is NbaPrediction {
@@ -140,15 +154,12 @@ export default function Home() {
   const [paymentMessage,setPaymentMessage] = useState("");
   const [error,setError] = useState("");
   const [refreshKey,setRefreshKey] = useState(0);
-  const [teams,setTeams] = useState<string[]>([]);
-  const [teamsLoading,setTeamsLoading] = useState(false);
+  const [footballGames,setFootballGames] = useState<FootballGame[]>([]);
+  const [footballGamesLoading,setFootballGamesLoading] = useState(false);
   const [nbaGames,setNbaGames] = useState<NbaGame[]>([]);
   const [nbaGamesLoading,setNbaGamesLoading] = useState(false);
   const [nbaGameLines,setNbaGameLines] = useState<Record<string,string>>({});
   const [nbaGameOutcomes,setNbaGameOutcomes] = useState<NbaGameOutcome[]>([]);
-  const [homeTeam,setHomeTeam] = useState("");
-  const [awayTeam,setAwayTeam] = useState("");
-  const [prediction,setPrediction] = useState<Prediction|null>(null);
   const [predictionLoading,setPredictionLoading] = useState(false);
 
   useEffect(() => {
@@ -251,7 +262,7 @@ export default function Home() {
   }, [accessToken]);
 
   useEffect(() => {
-    if (!accessToken || sport === "NBA" || !subscriptions.some(item =>
+    if (!accessToken || sport !== "Football" || !subscriptions.some(item =>
       item.sport === sport && new Date(item.expires_at).getTime() > Date.now())) {
       return;
     }
@@ -259,27 +270,34 @@ export default function Home() {
     let cancelled = false;
     void Promise.resolve().then(async () => {
       if (cancelled) return;
-      setTeamsLoading(true);
+      setFootballGamesLoading(true);
       try {
-        const response = await fetch("/api/models/football/teams", {
+        const response = await fetch("/api/models/football/games", {
           headers: { Authorization: `Bearer ${accessToken}` },
           cache: "no-store",
         });
         const result: unknown = await response.json();
         if (cancelled) return;
-        if (!response.ok || !Array.isArray(result) || !result.every(team => typeof team === "string")) {
-          setError(getApiError(result) ?? `Could not load ${sport} teams.`);
-          setTeams([]);
+        if (!response.ok) {
+          setError(getApiError(result) ?? "Could not load upcoming Football games.");
+          setFootballGames([]);
           return;
         }
-        setTeams(result);
+        if (!isRecord(result) || !Array.isArray(result.fixtures) ||
+            !result.fixtures.every(isFootballGame)) {
+          setError("The Football model returned invalid fixture data.");
+          setFootballGames([]);
+          return;
+        }
+        setFootballGames(result.fixtures);
         setError("");
-        setHomeTeam(current => result.includes(current) ? current : result[0] ?? "");
-        setAwayTeam(current => result.includes(current) ? current : result[1] ?? "");
       } catch {
-        if (!cancelled) setError(`Could not connect to the ${sport} model API.`);
+        if (!cancelled) {
+          setError("Could not connect to the Football model API.");
+          setFootballGames([]);
+        }
       } finally {
-        if (!cancelled) setTeamsLoading(false);
+        if (!cancelled) setFootballGamesLoading(false);
       }
     });
     return () => { cancelled = true; };
@@ -394,41 +412,6 @@ export default function Home() {
       return;
     }
     document.getElementById("model-predictions")?.scrollIntoView({ behavior: "smooth" });
-  }
-
-  async function runPrediction(event:FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!accessToken) {
-      setError("Sign in again before requesting a prediction.");
-      return;
-    }
-    setError("");
-    setPrediction(null);
-    setPredictionLoading(true);
-    try {
-      const response = await fetch("/api/models/football/predict", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({ home_team: homeTeam, away_team: awayTeam }),
-      });
-      const result: unknown = await response.json();
-      if (!response.ok) {
-        setError(getApiError(result) ?? `The ${sport} prediction could not be generated.`);
-        return;
-      }
-      if (!isFootballPrediction(result)) {
-        setError("The Football model returned an incomplete prediction.");
-        return;
-      }
-      setPrediction({ sport: "Football", result });
-    } catch {
-      setError(`Could not connect to the ${sport} model API.`);
-    } finally {
-      setPredictionLoading(false);
-    }
   }
 
   async function runNbaPredictions(event:FormEvent<HTMLFormElement>) {
@@ -559,7 +542,7 @@ export default function Home() {
           <section className="welcome"><div><p className="eyebrow">MEMBER DASHBOARD</p><h1>Welcome back</h1></div><button className="primary-button" onClick={()=>void openModel()}>{activeSubscription?`Get ${sport} predictions`:`Subscribe to ${sport}`}</button></section>
 
           <section className="sport-tabs" aria-label="Choose sport">
-            {["Football","NBA"].map(item => <button key={item} className={sport===item?"selected":""} onClick={()=>{setSport(item);setPrediction(null);setTeams([]);setNbaGames([]);setNbaGameOutcomes([]);setError("");}}>{item}{item==="NBA"?<span className="tab-price">₦10,000</span>:<span className="tab-price">₦50,000</span>}</button>)}
+            {["Football","NBA"].map(item => <button key={item} className={sport===item?"selected":""} onClick={()=>{setSport(item);setFootballGames([]);setNbaGames([]);setNbaGameOutcomes([]);setError("");}}>{item}{item==="NBA"?<span className="tab-price">₦10,000</span>:<span className="tab-price">₦50,000</span>}</button>)}
           </section>
 
           <section className="stats-grid">
@@ -648,32 +631,29 @@ export default function Home() {
                     )}
                   </form>
                 ) : (
-                  <>
-                    <form className="model-form" onSubmit={runPrediction}>
-                      <label>Home team
-                        <select required value={homeTeam} disabled={teamsLoading || teams.length === 0} onChange={event=>setHomeTeam(event.target.value)}>
-                          {teams.map(team=><option key={team} value={team}>{team}</option>)}
-                        </select>
-                      </label>
-                      <label>Away team
-                        <select required value={awayTeam} disabled={teamsLoading || teams.length === 0} onChange={event=>setAwayTeam(event.target.value)}>
-                          {teams.map(team=><option key={team} value={team}>{team}</option>)}
-                        </select>
-                      </label>
-                      <button className="primary-button" type="submit" disabled={teamsLoading || predictionLoading || teams.length < 2}>
-                        {teamsLoading ? "Loading teams…" : predictionLoading ? "Generating prediction…" : "Predict match"}
-                      </button>
-                    </form>
-                    {prediction?.sport === "Football" && (
-                      <div className="prediction-result" aria-live="polite">
-                        <h3>{prediction.result.home_team} vs {prediction.result.away_team}</h3>
-                        <p>Expected goals <strong>{prediction.result.expected_home_goals.toFixed(2)} – {prediction.result.expected_away_goals.toFixed(2)}</strong></p>
-                        <p>1X2 <strong>{prediction.result.home_win_probability_pct.toFixed(1)}% / {prediction.result.draw_probability_pct.toFixed(1)}% / {prediction.result.away_win_probability_pct.toFixed(1)}%</strong></p>
-                        <p>Over 2.5 <strong>{prediction.result.over_2_5_probability_pct.toFixed(1)}%</strong> · Under 2.5 <strong>{prediction.result.under_2_5_probability_pct.toFixed(1)}%</strong></p>
-                        <p>Most likely score <strong>{prediction.result.most_likely_score}</strong> ({prediction.result.most_likely_score_probability_pct.toFixed(1)}%)</p>
+                  <div className="football-games-form">
+                    <p className="nba-schedule-caption">Upcoming games and model predictions in the next 24 hours (UK time)</p>
+                    {footballGamesLoading ? (
+                      <p className="nba-games-empty">Loading Football games…</p>
+                    ) : footballGames.length === 0 ? (
+                      <p className="nba-games-empty">No Football games are scheduled in the next 24 hours.</p>
+                    ) : (
+                      <div className="nba-games-list">
+                        {footballGames.map(game => (
+                          <article className="football-game-card" key={`${game.kickoff}-${game.home_team}-${game.away_team}`}>
+                            <h3 className="nba-game-title">{game.home_team} vs {game.away_team}</h3>
+                            <p className="nba-game-status">{game.status} · {game.kickoff} (UK time)</p>
+                            <div className="prediction-result football-game-result" aria-live="polite">
+                              <p>Expected goals <strong>{game.prediction.expected_home_goals.toFixed(2)} – {game.prediction.expected_away_goals.toFixed(2)}</strong></p>
+                              <p>1X2 <strong>{game.prediction.home_win_probability_pct.toFixed(1)}% / {game.prediction.draw_probability_pct.toFixed(1)}% / {game.prediction.away_win_probability_pct.toFixed(1)}%</strong></p>
+                              <p>Over 2.5 <strong>{game.prediction.over_2_5_probability_pct.toFixed(1)}%</strong> · Under 2.5 <strong>{game.prediction.under_2_5_probability_pct.toFixed(1)}%</strong></p>
+                              <p>Most likely score <strong>{game.prediction.most_likely_score}</strong> ({game.prediction.most_likely_score_probability_pct.toFixed(1)}%)</p>
+                            </div>
+                          </article>
+                        ))}
                       </div>
                     )}
-                  </>
+                  </div>
                 )
               ) : (
                 <div className="locked-preview">
