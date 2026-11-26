@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import Image from "next/image";
 
 type Subscription = { sport: string; expires_at: string };
 type AuthResponse = { token?: string; email?: string; error?: string };
@@ -305,6 +306,20 @@ function Icon({ name, size = 20 }: { name:string; size?:number }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
 
+function CommunityLinks() {
+  return (
+    <section className="community-links" aria-label="SportSense AI channels">
+      <p className="eyebrow">FOLLOW OUR CHANNELS</p>
+      <a href="https://whatsapp.com/channel/0029VbEMFbsJENyA6a8fBc0C" target="_blank" rel="noopener noreferrer">
+        Follow the SportSense AI channel on WhatsApp
+      </a>
+      <a href="https://t.me/SportSenseAI" target="_blank" rel="noopener noreferrer">
+        SportSense AI Telegram channel
+      </a>
+    </section>
+  );
+}
+
 function PredictionHistory({
   items,
   loading,
@@ -424,7 +439,9 @@ export default function Home() {
   const [authLoading,setAuthLoading] = useState(true);
   const [authMode,setAuthMode] = useState<"signIn"|"signUp">("signIn");
   const [signupProfile,setSignupProfile] = useState<SignupProfile>(emptySignupProfile);
-  const [activeView,setActiveView] = useState<"overview"|"predictions">("overview");
+  const [activeView,setActiveView] = useState<"overview"|"predictions"|"subscription">("overview");
+  const [subscriptionsLoading,setSubscriptionsLoading] = useState(true);
+  const [subscriptionsError,setSubscriptionsError] = useState("");
   const [predictionHistory,setPredictionHistory] = useState<PredictionHistoryItem[]>([]);
   const [predictionHistoryLoading,setPredictionHistoryLoading] = useState(false);
   const [predictionHistoryError,setPredictionHistoryError] = useState("");
@@ -457,7 +474,10 @@ export default function Home() {
   useEffect(() => {
     if (!accessToken) return;
     let cancelled = false;
-    void (async () => {
+    void Promise.resolve().then(async () => {
+      if (cancelled) return;
+      setSubscriptionsLoading(true);
+      setSubscriptionsError("");
       try {
         const response = await fetch("/api/subscriptions", {
           headers: { Authorization: `Bearer ${accessToken}` },
@@ -470,20 +490,29 @@ export default function Home() {
           setAccessToken(null);
           setUserEmail(null);
           setSubscriptions([]);
+          setSubscriptionsError("Your sign-in expired. Please sign in again.");
           setError("Your sign-in expired. Please sign in again.");
         } else if (!response.ok || !data.email || !data.subscriptions) {
+          setSubscriptionsError(data.error ?? "Could not load subscription status. Please refresh.");
           setError(data.error ?? "Could not load subscription status. Please refresh.");
         } else {
           setUserEmail(data.email);
           setSubscriptions(data.subscriptions);
+          setSubscriptionsError("");
           setError("");
         }
       } catch {
-        if (!cancelled) setError("Could not load subscription status. Please refresh.");
+        if (!cancelled) {
+          setSubscriptionsError("Could not load subscription status. Please refresh.");
+          setError("Could not load subscription status. Please refresh.");
+        }
       } finally {
-        if (!cancelled) setAuthLoading(false);
+        if (!cancelled) {
+          setSubscriptionsLoading(false);
+          setAuthLoading(false);
+        }
       }
-    })();
+    });
     return () => { cancelled = true; };
   }, [accessToken,refreshKey]);
 
@@ -868,7 +897,7 @@ export default function Home() {
   if (!userEmail) return (
     <div className="auth-page">
       <form className="auth-card" onSubmit={submitAuth}>
-        <div className="brand auth-brand"><div className="brand-mark"><span>S</span></div><span>SportSense AI</span></div>
+        <div className="brand auth-brand"><Image className="brand-logo" src="/sportsense-ai-logo.png" width={1140} height={200} alt="SportSense AI" /><Image className="brand-mark" src="/sportsense-ai-mark.svg" width={96} height={96} alt="" aria-hidden="true" /></div>
         <p className="eyebrow">MEMBER ACCESS</p>
         <h1>{authMode === "signIn" ? "Welcome back" : "Create your account"}</h1>
         <p className="auth-copy">Sign in to manage subscriptions and access your sports models.</p>
@@ -897,21 +926,28 @@ export default function Home() {
         <button className="auth-switch" type="button" onClick={()=>{setAuthMode(authMode==="signIn"?"signUp":"signIn");setError("");setMessage("");}}>
           {authMode === "signIn" ? "New here? Create an account" : "Already have an account? Sign in"}
         </button>
+        <CommunityLinks />
       </form>
     </div>
   );
 
-  const activeSubscription = subscriptions.find(item=>item.sport===sport);
+  const activeSubscription = subscriptions.find(item =>
+    item.sport === sport,
+  );
+  const managedSubscriptions = ["Football", "NBA"].map(subscriptionSport => ({
+    sport: subscriptionSport,
+    subscription: subscriptions.find(item => item.sport === subscriptionSport),
+  }));
 
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div className="brand"><div className="brand-mark"><svg viewBox="0 0 32 32"><path d="M16 3v26M3 16h26M7 7l18 18M25 7 7 25"/><circle cx="16" cy="16" r="7"/></svg></div><span>SportSense AI</span></div>
+        <div className="brand"><Image className="brand-logo" src="/sportsense-ai-logo.png" width={1140} height={200} alt="SportSense AI" /><Image className="brand-mark" src="/sportsense-ai-mark.svg" width={96} height={96} alt="" aria-hidden="true" /></div>
         <nav className="main-nav" aria-label="Main navigation">
           <button className={`nav-item ${activeView === "overview" ? "active" : ""}`} aria-current={activeView === "overview" ? "page" : undefined} onClick={() => setActiveView("overview")}><Icon name="grid"/><span>Overview</span></button>
           <button className={`nav-item ${activeView === "predictions" ? "active" : ""}`} aria-current={activeView === "predictions" ? "page" : undefined} onClick={() => setActiveView("predictions")}><Icon name="trophy"/><span>Predictions</span></button>
           <button className="nav-item"><Icon name="chart"/><span>Performance</span></button>
-          <button className="nav-item"><Icon name="wallet"/><span>Subscription</span></button>
+          <button className={`nav-item ${activeView === "subscription" ? "active" : ""}`} aria-current={activeView === "subscription" ? "page" : undefined} onClick={() => setActiveView("subscription")}><Icon name="wallet"/><span>Subscription</span></button>
         </nav>
         <div className="sidebar-bottom">
           <button className="nav-item"><Icon name="user"/><span>Account</span></button>
@@ -939,6 +975,51 @@ export default function Home() {
               onRefresh={() => setPredictionHistoryRefresh(value => value + 1)}
               onDelete={id => void deletePrediction(id)}
             />
+          ) : activeView === "subscription" ? (
+            <section className="subscription-page">
+              <div className="welcome">
+                <div>
+                  <p className="eyebrow">YOUR ACCOUNT</p>
+                  <h1>Manage subscriptions</h1>
+                </div>
+                <button className="text-button" onClick={() => setRefreshKey(value => value + 1)}>Refresh subscriptions</button>
+              </div>
+              <p className="subscription-page-copy">Check your plan status and when your model access ends.</p>
+              {subscriptionsError && <p className="form-error dashboard-error" role="alert">{subscriptionsError}</p>}
+              {subscriptionsLoading ? (
+                <div className="subscription-empty" role="status">Loading your subscriptions…</div>
+              ) : (
+                <div className="subscription-list">
+                  {managedSubscriptions.map(({ sport: subscriptionSport, subscription }) => (
+                    <article className="panel subscription-card" key={subscriptionSport}>
+                      <div className="subscription-card-heading">
+                        <div>
+                          <p className="eyebrow">30-DAY PLAN</p>
+                          <h2>{subscriptionSport} Premium</h2>
+                        </div>
+                        <span className={subscription ? "active-status" : "locked-status"}>
+                          {subscription ? "Active" : "Not active"}
+                        </span>
+                      </div>
+                      {subscription ? (
+                        <div className="subscription-expiry">
+                          <span>Access ends</span>
+                          <strong>{new Date(subscription.expires_at).toLocaleDateString(undefined, {
+                            year: "numeric",
+                            month: "long",
+                            day: "numeric",
+                          })}</strong>
+                        </div>
+                      ) : (
+                        <p className="subscription-inactive">
+                          No active {subscriptionSport} subscription. Subscribe to unlock model predictions.
+                        </p>
+                      )}
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
           ) : (
             <>
           <section className="welcome"><div><p className="eyebrow">MEMBER DASHBOARD</p><h1>Welcome back</h1></div><button className="primary-button" onClick={()=>void openModel()}>{activeSubscription?`Get ${sport} predictions`:`Subscribe to ${sport}`}</button></section>
@@ -1085,11 +1166,12 @@ export default function Home() {
                   <div className="chart-dates"><span>Oct 22</span><span>Oct 29</span><span>Nov 5</span><span>Nov 12</span><span>Nov 21</span></div>
                 </div>
               </article>
-              <article className="panel plan-panel"><div><p className="eyebrow">CURRENT PLAN</p><h2>{sport} Premium</h2></div><div className="plan-price">{sport==="NBA"?"₦10,000":"₦50,000"}<span>/30 days</span></div><button className="secondary-button">Manage subscription</button></article>
+              <article className="panel plan-panel"><div><p className="eyebrow">CURRENT PLAN</p><h2>{sport} Premium</h2></div><div className="plan-price">{sport==="NBA"?"₦10,000":"₦50,000"}<span>/30 days</span></div><button className="secondary-button" onClick={() => setActiveView("subscription")}>Manage subscription</button></article>
             </aside>
           </section>
             </>
           )}
+          <CommunityLinks />
         </div>
       </main>
     </div>

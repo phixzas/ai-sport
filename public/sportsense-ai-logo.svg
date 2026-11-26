@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1140" height="200" viewBox="0 0 570 100" fill="none">
+  <title>SportSense AI</title>
+  <desc>A sports ball crossed by an upward prediction signal, beside the SportSense AI wordmark.</desc>
+  <defs>
+    <linearGradient id="brand" x1="8" y1="8" x2="88" y2="90" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7669F3"/>
+      <stop offset="1" stop-color="#382A9E"/>
+    </linearGradient>
+    <linearGradient id="signal" x1="18" y1="66" x2="73" y2="30" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#B8F27A"/>
+      <stop offset="1" stop-color="#65E0C1"/>
+    </linearGradient>
+  </defs>
+  <rect width="570" height="100" rx="18" fill="#fff"/>
+  <g transform="translate(4 4)">
+    <rect x="3" y="3" width="90" height="90" rx="25" fill="url(#brand)"/>
+    <circle cx="48" cy="48" r="30" stroke="#fff" stroke-opacity=".78" stroke-width="2"/>
+    <path d="M48 18c-10 9-14 19-14 30s4 21 14 30M48 18c10 9 14 19 14 30s-4 21-14 30M18 48h60" stroke="#fff" stroke-opacity=".38" stroke-width="1.7"/>
+    <path d="m22 65 14-13 11 7 23-25" stroke="url(#signal)" stroke-linecap="round" stroke-linejoin="round" stroke-width="5"/>
+    <path d="M59 34h11v11" stroke="url(#signal)" stroke-linecap="round" stroke-linejoin="round" stroke-width="5"/>
+  </g>
+  <text x="118" y="53" fill="#201C35" font-family="Arial, Helvetica, sans-serif" font-size="35" font-weight="700" letter-spacing="-1">SportSense</text>
+  <text x="321" y="53" fill="#6558D9" font-family="Arial, Helvetica, sans-serif" font-size="35" font-weight="700" letter-spacing="-1">AI</text>
+  <text x="120" y="77" fill="#777583" font-family="Arial, Helvetica, sans-serif" font-size="10" font-weight="700" letter-spacing="3">PREDICT WITH AN EDGE</text>
+</svg>
