@@ -209,6 +209,88 @@ async function readAuthResponse(response: Response): Promise<AuthResponse | null
   }
 }
 
+type PredictionVerdict = "mark" | "miss" | "push";
+
+function ResultBadge({ verdict }: { verdict: PredictionVerdict | null }) {
+  if (!verdict) return null;
+  const text = verdict === "mark" ? "✅ Mark" : verdict === "miss" ? "❌ Miss" : "➖ Push";
+  return <span className={`prediction-verdict prediction-verdict-${verdict}`} role="status">{text}</span>;
+}
+
+function getNbaTotalVerdict(item: Extract<PredictionHistoryItem, { sport: "NBA" }>): PredictionVerdict | null {
+  const actual = item.actualResult;
+  if (!actual || actual.status !== "Final") return null;
+  const actualTotal = actual.homeScore + actual.awayScore;
+  if (actualTotal === item.input.line) return "push";
+
+  const pick = item.result.pick.toLowerCase();
+  const predictsOver = /\bover\b/.test(pick)
+    ? true
+    : /\bunder\b/.test(pick)
+      ? false
+      : item.result.predicted_total === item.input.line
+        ? null
+        : item.result.predicted_total > item.input.line;
+  if (predictsOver === null) return null;
+  return (actualTotal > item.input.line) === predictsOver ? "mark" : "miss";
+}
+
+function getNbaWinnerVerdict(item: Extract<PredictionHistoryItem, { sport: "NBA" }>): PredictionVerdict | null {
+  const actual = item.actualResult;
+  if (!actual || actual.status !== "Final" || actual.homeScore === actual.awayScore || !item.result.winner) {
+    return null;
+  }
+  const winner = item.result.winner.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const home = item.input.home_team.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const away = item.input.away_team.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const predictsHome = winner === "home" || winner === "hometeam" || winner === home
+    ? true
+    : winner === "away" || winner === "awayteam" || winner === away
+      ? false
+      : null;
+  if (predictsHome === null) return null;
+  return (actual.homeScore > actual.awayScore) === predictsHome ? "mark" : "miss";
+}
+
+function getFootballOutcomeVerdict(item: Extract<PredictionHistoryItem, { sport: "Football" }>): PredictionVerdict | null {
+  const actual = item.actualResult;
+  if (!actual || actual.status !== "Final") return null;
+  const probabilities = [
+    item.result.home_win_probability_pct,
+    item.result.draw_probability_pct,
+    item.result.away_win_probability_pct,
+  ];
+  const highestProbability = Math.max(...probabilities);
+  if (probabilities.filter(probability => probability === highestProbability).length !== 1) return null;
+  const predictedOutcome = probabilities.indexOf(highestProbability);
+  const actualOutcome = actual.homeScore > actual.awayScore
+    ? 0
+    : actual.homeScore === actual.awayScore
+      ? 1
+      : 2;
+  return predictedOutcome === actualOutcome ? "mark" : "miss";
+}
+
+function getFootballTotalVerdict(item: Extract<PredictionHistoryItem, { sport: "Football" }>): PredictionVerdict | null {
+  const actual = item.actualResult;
+  if (!actual || actual.status !== "Final") return null;
+  const overProbability = item.result.over_2_5_probability_pct;
+  const underProbability = item.result.under_2_5_probability_pct;
+  if (overProbability === underProbability) return null;
+  const predictsOver = overProbability > underProbability;
+  return ((actual.homeScore + actual.awayScore) > 2.5) === predictsOver ? "mark" : "miss";
+}
+
+function getFootballScoreVerdict(item: Extract<PredictionHistoryItem, { sport: "Football" }>): PredictionVerdict | null {
+  const actual = item.actualResult;
+  if (!actual || actual.status !== "Final") return null;
+  const predictedScore = item.result.most_likely_score.match(/^\s*(\d+)\s*[-:–]\s*(\d+)\s*$/);
+  if (!predictedScore) return null;
+  return (Number(predictedScore[1]) === actual.homeScore && Number(predictedScore[2]) === actual.awayScore)
+    ? "mark"
+    : "miss";
+}
+
 function Icon({ name, size = 20 }: { name:string; size?:number }) {
   const paths: Record<string, ReactNode> = {
     grid:<><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></>,
@@ -291,12 +373,15 @@ function PredictionHistory({
                 {item.sport === "NBA" ? (
                   <>
                     <p>Predicted total <strong>{item.result.predicted_total.toFixed(1)}</strong> · Line <strong>{item.input.line}</strong></p>
-                    <p>Pick <strong>{item.result.pick}</strong> · Edge <strong>{item.result.edge > 0 ? "+" : ""}{item.result.edge.toFixed(1)}</strong></p>
+                    <p>Pick <strong>{item.result.pick}</strong> · Edge <strong>{item.result.edge > 0 ? "+" : ""}{item.result.edge.toFixed(1)}</strong>
+                      {item.actualResult?.status === "Final" && <> · <ResultBadge verdict={getNbaTotalVerdict(item)} /></>}
+                    </p>
                     {item.result.winner && (
                       <p>Likely winner <strong>{item.result.winner}</strong>
                         {item.result.winner_probability !== null
                           ? ` (${(item.result.winner_probability * 100).toFixed(1)}%)`
                           : ""}
+                        {item.actualResult?.status === "Final" && <> · <ResultBadge verdict={getNbaWinnerVerdict(item)} /></>}
                       </p>
                     )}
                     <p>Injuries: {item.result.injuries.home.report || "None reported"} · {item.result.injuries.away.report || "None reported"}</p>
@@ -308,9 +393,15 @@ function PredictionHistory({
                   <>
                     {item.input.kickoff && <p>Kickoff <strong>{item.input.kickoff} (UK time)</strong></p>}
                     <p>Expected goals <strong>{item.result.expected_home_goals.toFixed(2)} – {item.result.expected_away_goals.toFixed(2)}</strong></p>
-                    <p>1X2 <strong>{item.result.home_win_probability_pct.toFixed(1)}% / {item.result.draw_probability_pct.toFixed(1)}% / {item.result.away_win_probability_pct.toFixed(1)}%</strong></p>
-                    <p>Over 2.5 <strong>{item.result.over_2_5_probability_pct.toFixed(1)}%</strong> · Under 2.5 <strong>{item.result.under_2_5_probability_pct.toFixed(1)}%</strong></p>
-                    <p>Most likely score <strong>{item.result.most_likely_score}</strong></p>
+                    <p>1X2 <strong>{item.result.home_win_probability_pct.toFixed(1)}% / {item.result.draw_probability_pct.toFixed(1)}% / {item.result.away_win_probability_pct.toFixed(1)}%</strong>
+                      {item.actualResult?.status === "Final" && <> · <ResultBadge verdict={getFootballOutcomeVerdict(item)} /></>}
+                    </p>
+                    <p>Over 2.5 <strong>{item.result.over_2_5_probability_pct.toFixed(1)}%</strong> · Under 2.5 <strong>{item.result.under_2_5_probability_pct.toFixed(1)}%</strong>
+                      {item.actualResult?.status === "Final" && <> · <ResultBadge verdict={getFootballTotalVerdict(item)} /></>}
+                    </p>
+                    <p>Most likely score <strong>{item.result.most_likely_score}</strong>
+                      {item.actualResult?.status === "Final" && <> · <ResultBadge verdict={getFootballScoreVerdict(item)} /></>}
+                    </p>
                   </>
                 )}
               </div>
