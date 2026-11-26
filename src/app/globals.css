@@ -108,6 +108,11 @@ button { cursor:pointer; }
 .subscription-page-copy { margin:-12px 0 20px; color:#858391; font-size:13px; }
 .subscription-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
 .subscription-card { padding:22px; }
+.account-profile-card { padding:22px; }
+.account-profile-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:0 24px; margin:0; }
+.account-profile-grid > div { padding:16px 0; border-bottom:1px solid var(--line); }
+.account-profile-grid dt { color:#858391; font-size:12px; }
+.account-profile-grid dd { margin:7px 0 0; font-size:14px; font-weight:600; overflow-wrap:anywhere; }
 .subscription-card-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .subscription-card-heading h2 { margin:0; font-size:17px; }
 .subscription-expiry { display:flex; flex-direction:column; gap:7px; margin-top:24px; padding-top:18px; border-top:1px solid var(--line); }
@@ -205,6 +210,7 @@ button { cursor:pointer; }
   .stat-card { height:125px; }
   .right-column { grid-template-columns:1fr; }
   .subscription-list { grid-template-columns:1fr; }
+  .account-profile-grid { grid-template-columns:1fr; }
   .model-form { grid-template-columns:1fr; }
   .nba-game-card { grid-template-columns:1fr; }
   .match-main { grid-template-columns:1fr 28px 1fr; }

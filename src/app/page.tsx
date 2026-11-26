@@ -15,6 +15,17 @@ type SignupProfile = {
   streetAddress: string;
   dateOfBirth: string;
 };
+type AccountProfile = {
+  email: string;
+  fullName: string | null;
+  phoneNumber: string | null;
+  gender: string | null;
+  country: string | null;
+  region: string | null;
+  city: string | null;
+  streetAddress: string | null;
+  dateOfBirth: string | null;
+};
 type FootballPrediction = {
   home_team: string;
   away_team: string;
@@ -113,6 +124,13 @@ function getApiError(value: unknown) {
   if (typeof value.error === "string") return value.error;
   if (typeof value.detail === "string") return value.detail;
   return undefined;
+}
+
+function isAccountProfile(value: unknown): value is AccountProfile {
+  return isRecord(value) &&
+    typeof value.email === "string" &&
+    ["fullName", "phoneNumber", "gender", "country", "region", "city", "streetAddress", "dateOfBirth"]
+      .every(field => typeof value[field] === "string" || value[field] === null);
 }
 
 function isFootballPrediction(value: unknown): value is FootballPrediction {
@@ -439,9 +457,13 @@ export default function Home() {
   const [authLoading,setAuthLoading] = useState(true);
   const [authMode,setAuthMode] = useState<"signIn"|"signUp">("signIn");
   const [signupProfile,setSignupProfile] = useState<SignupProfile>(emptySignupProfile);
-  const [activeView,setActiveView] = useState<"overview"|"predictions"|"subscription">("overview");
+  const [activeView,setActiveView] = useState<"overview"|"predictions"|"subscription"|"account">("overview");
   const [subscriptionsLoading,setSubscriptionsLoading] = useState(true);
   const [subscriptionsError,setSubscriptionsError] = useState("");
+  const [accountProfile,setAccountProfile] = useState<AccountProfile|null>(null);
+  const [accountLoading,setAccountLoading] = useState(false);
+  const [accountError,setAccountError] = useState("");
+  const [accountRefresh,setAccountRefresh] = useState(0);
   const [predictionHistory,setPredictionHistory] = useState<PredictionHistoryItem[]>([]);
   const [predictionHistoryLoading,setPredictionHistoryLoading] = useState(false);
   const [predictionHistoryError,setPredictionHistoryError] = useState("");
@@ -515,6 +537,48 @@ export default function Home() {
     });
     return () => { cancelled = true; };
   }, [accessToken,refreshKey]);
+
+  useEffect(() => {
+    if (!accessToken || activeView !== "account") return;
+    let cancelled = false;
+    void Promise.resolve().then(async () => {
+      if (cancelled) return;
+      setAccountLoading(true);
+      setAccountError("");
+      setAccountProfile(null);
+      try {
+        const response = await fetch("/api/auth/profile", {
+          headers: { Authorization: `Bearer ${accessToken}` },
+          cache: "no-store",
+        });
+        const result: unknown = await response.json();
+        if (cancelled) return;
+        if (response.status === 401) {
+          window.localStorage.removeItem("formly_token");
+          setAccessToken(null);
+          setUserEmail(null);
+          setSubscriptions([]);
+          setAccountError("Your sign-in expired. Please sign in again.");
+          setError("Your sign-in expired. Please sign in again.");
+          return;
+        }
+        if (!response.ok) {
+          setAccountError(getApiError(result) ?? "Could not load your account profile.");
+          return;
+        }
+        if (!isRecord(result) || !isAccountProfile(result.profile)) {
+          setAccountError("The account service returned invalid profile data.");
+          return;
+        }
+        setAccountProfile(result.profile);
+      } catch {
+        if (!cancelled) setAccountError("Could not load your account profile. Please try again.");
+      } finally {
+        if (!cancelled) setAccountLoading(false);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [accessToken,activeView,accountRefresh]);
 
   useEffect(() => {
     if (!accessToken || activeView !== "predictions") return;
@@ -890,6 +954,8 @@ export default function Home() {
     setAccessToken(null);
     setUserEmail(null);
     setSubscriptions([]);
+    setAccountProfile(null);
+    setActiveView("overview");
     setAuthLoading(false);
   }
 
@@ -938,6 +1004,17 @@ export default function Home() {
     sport: subscriptionSport,
     subscription: subscriptions.find(item => item.sport === subscriptionSport),
   }));
+  const accountFields = accountProfile ? [
+    { label: "Full name", value: accountProfile.fullName },
+    { label: "Email address", value: accountProfile.email },
+    { label: "Phone number", value: accountProfile.phoneNumber },
+    { label: "Gender", value: accountProfile.gender },
+    { label: "Country", value: accountProfile.country },
+    { label: "State or region", value: accountProfile.region },
+    { label: "City", value: accountProfile.city },
+    { label: "Street address", value: accountProfile.streetAddress },
+    { label: "Date of birth", value: accountProfile.dateOfBirth },
+  ] : [];
 
   return (
     <div className="app-shell">
@@ -950,7 +1027,7 @@ export default function Home() {
           <button className={`nav-item ${activeView === "subscription" ? "active" : ""}`} aria-current={activeView === "subscription" ? "page" : undefined} onClick={() => setActiveView("subscription")}><Icon name="wallet"/><span>Subscription</span></button>
         </nav>
         <div className="sidebar-bottom">
-          <button className="nav-item"><Icon name="user"/><span>Account</span></button>
+          <button className={`nav-item ${activeView === "account" ? "active" : ""}`} aria-current={activeView === "account" ? "page" : undefined} onClick={() => setActiveView("account")}><Icon name="user"/><span>Account</span></button>
           <div className="profile"><div className="avatar">AK</div><div><strong>Ade Kunle</strong><span>Premium member</span></div></div>
         </div>
       </aside>
@@ -965,7 +1042,37 @@ export default function Home() {
         </header>
 
         <div className="content">
-          {activeView === "predictions" ? (
+          {activeView === "account" ? (
+            <section className="account-page">
+              <div className="welcome">
+                <div>
+                  <p className="eyebrow">YOUR ACCOUNT</p>
+                  <h1>Your profile</h1>
+                </div>
+                <button className="text-button" onClick={() => setAccountRefresh(value => value + 1)} disabled={accountLoading}>
+                  Refresh profile
+                </button>
+              </div>
+              {accountLoading ? (
+                <div className="subscription-empty" role="status">Loading your profile…</div>
+              ) : accountProfile ? (
+                <article className="panel account-profile-card">
+                  <dl className="account-profile-grid">
+                    {accountFields.map(({ label, value }) => (
+                      <div key={label}>
+                        <dt>{label}</dt>
+                        <dd>{value || "Not provided"}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </article>
+              ) : (
+                <p className="form-error dashboard-error" role="alert">
+                  {accountError || "Your profile is unavailable. Please refresh to try again."}
+                </p>
+              )}
+            </section>
+          ) : activeView === "predictions" ? (
             <PredictionHistory
               items={predictionHistory}
               loading={predictionHistoryLoading}
